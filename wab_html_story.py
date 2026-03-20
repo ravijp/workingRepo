@@ -163,20 +163,24 @@ def kv(items: list[tuple[str, object]]) -> str:
     return f'<div class="table-wrap"><table class="kv">{rows}</table></div>'
 
 
-def page_frame(
-    assumptions: list[str],
-    inputs: list[str],
-    logic: list[str],
-    message: list[str],
-    next_steps: list[str],
-) -> str:
-    return ''.join([
-        section("Assumptions", bullets(assumptions)),
-        section("Inputs Used", bullets(inputs)),
-        section("Logic for This Page", bullets(logic)),
-        section("Director Readout", bullets(message)),
-        section("Suggested Next Steps", bullets(next_steps)),
-    ])
+def framing_panel(title: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    return (
+        f'<div class="frame-card"><h3>{html.escape(title)}</h3>{bullets(items)}</div>'
+    )
+
+
+def section_frame(meta: dict[str, object]) -> str:
+    return (
+        '<div class="frame-grid">'
+        + framing_panel("Assumptions", meta.get("assumptions", []))
+        + framing_panel("Inputs Used", meta.get("inputs", []))
+        + framing_panel("Logic", meta.get("logic", []))
+        + framing_panel("Director Readout", meta.get("director_readout", []))
+        + framing_panel("Suggested Next Steps", meta.get("next_steps", []))
+        + '</div>'
+    )
 
 
 def evidence_section(title: str, intro: str, df: pd.DataFrame, max_rows: int = 20, trunc_chars: int = 140) -> str:
@@ -263,35 +267,92 @@ def naics_appendix_html(df: pd.DataFrame) -> str:
     return section("Internal Extract - NAICS Diagnostic", ''.join(parts))
 
 
-def page_template(title: str, takeaway: str, body: str, slug: str, nav: list[tuple[str, str]]) -> str:
-    nav_html = '<nav class="nav">' + ''.join(
-        f'<a class="{"active" if s == slug else ""}" href="{s}.html">{html.escape(label)}</a>'
-        for s, label in nav
+def story_template(sections_html: str, nav: list[tuple[str, str]], intro_takeaway: str) -> str:
+    nav_html = '<nav class="side-nav">' + ''.join(
+        f'<a data-nav-link="section-{slug}" href="#section-{slug}">{html.escape(label)}</a>'
+        for slug, label in nav
     ) + '</nav>'
     return f'''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} | {html.escape(SITE_TITLE)}</title>
+<title>{html.escape(SITE_TITLE)}</title>
 <style>
-body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;background:#f8fafc;color:#1e293b;line-height:1.45}}
+html{{scroll-behavior:smooth}}
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;background:#f8fafc;color:#1e293b;line-height:1.5}}
 .top{{background:#0f172a;color:#fff;border-bottom:4px solid #2563eb}}
-.shell{{max-width:1300px;margin:0 auto;padding:24px 28px 48px}}
-.top .shell{{padding:18px 28px}}
-h1{{margin:0;font-size:28px}} .sub{{margin-top:4px;font-size:14px;opacity:.85}}
-.nav{{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 26px}} .nav a{{text-decoration:none;color:#0f172a;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px 12px;font-size:14px}} .nav a.active{{background:#dbeafe;border-color:#60a5fa;font-weight:600}}
-.hero,.section,.metric{{background:#fff;border:1px solid #e2e8f0;border-radius:14px}}
-.hero{{padding:18px 20px;margin-bottom:20px}} .hero h2{{margin:0 0 8px;font-size:24px}} .hero p{{margin:0;font-size:16px;color:#334155}}
-.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0 8px}} .metric{{padding:14px 16px}} .metric-label{{color:#475569;font-size:13px;margin-bottom:8px}} .metric-value{{font-size:24px;font-weight:700;color:#0f172a}} .metric-note{{margin-top:6px;font-size:12px;color:#64748b}}
-.section{{padding:18px 20px;margin-bottom:18px}} .section h2{{margin:0 0 12px;font-size:20px}} .section h3{{margin:18px 0 10px;font-size:16px}}
-.table-wrap{{overflow-x:auto;margin-top:10px}} table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{border:1px solid #e2e8f0;padding:8px 10px;text-align:left;vertical-align:top}} th{{background:#f8fafc;font-weight:700}} table.kv th{{width:280px}}
-ul{{margin:8px 0 0 18px;padding:0}} li{{margin:6px 0}} .empty{{color:#64748b;font-style:italic;padding:6px 0}}
+.top-shell{{max-width:1600px;margin:0 auto;padding:18px 28px}}
+h1{{margin:0;font-size:30px}}
+.sub{{margin-top:6px;font-size:14px;opacity:.85}}
+.layout{{max-width:1600px;margin:0 auto;display:grid;grid-template-columns:290px minmax(0,1fr);gap:24px;padding:24px 28px 48px}}
+.side-nav{{position:sticky;top:16px;align-self:start;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px;max-height:calc(100vh - 32px);overflow:auto}}
+.side-nav a{{display:block;text-decoration:none;color:#0f172a;border:1px solid transparent;border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:14px}}
+.side-nav a:hover{{background:#f8fafc;border-color:#e2e8f0}}
+.side-nav a.active{{background:#dbeafe;border-color:#60a5fa;font-weight:600}}
+.content{{min-width:0}}
+.hero,.section,.story-section,.metric,.frame-card{{background:#fff;border:1px solid #e2e8f0;border-radius:16px}}
+.hero{{padding:22px 24px;margin-bottom:20px}}
+.hero h2{{margin:0 0 10px;font-size:26px}}
+.hero p{{margin:0;color:#334155;font-size:16px}}
+.story-section{{padding:22px 24px;margin-bottom:24px;scroll-margin-top:16px}}
+.story-section-header{{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #e2e8f0}}
+.story-section-header h2{{margin:0 0 8px;font-size:26px}}
+.story-section-header p{{margin:0;color:#475569;font-size:15px}}
+.frame-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0 20px}}
+.frame-card{{padding:14px 16px}}
+.frame-card h3{{margin:0 0 10px;font-size:15px;color:#0f172a}}
+.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0 8px}}
+.metric{{padding:14px 16px}}
+.metric-label{{color:#475569;font-size:13px;margin-bottom:8px}}
+.metric-value{{font-size:24px;font-weight:700;color:#0f172a}}
+.metric-note{{margin-top:6px;font-size:12px;color:#64748b}}
+.section{{padding:18px 20px;margin-bottom:18px}}
+.section h2{{margin:0 0 12px;font-size:20px}}
+.section h3{{margin:18px 0 10px;font-size:16px}}
+.table-wrap{{overflow-x:auto;margin-top:10px}}
+table{{width:100%;border-collapse:collapse;font-size:13px}}
+th,td{{border:1px solid #e2e8f0;padding:8px 10px;text-align:left;vertical-align:top}}
+th{{background:#f8fafc;font-weight:700}}
+table.kv th{{width:280px}}
+ul{{margin:8px 0 0 18px;padding:0}}
+li{{margin:6px 0}}
+.empty{{color:#64748b;font-style:italic;padding:6px 0}}
+@media (max-width: 1100px) {{
+  .layout{{grid-template-columns:1fr}}
+  .side-nav{{position:relative;top:auto;max-height:none}}
+}}
 </style>
 </head>
 <body>
-<div class="top"><div class="shell"><h1>{html.escape(SITE_TITLE)}</h1><div class="sub">{html.escape(RUN_LABEL)}</div></div></div>
-<div class="shell">{nav_html}<div class="hero"><h2>{html.escape(title)}</h2><p>{html.escape(takeaway)}</p></div>{body}</div>
+<div class="top"><div class="top-shell"><h1>{html.escape(SITE_TITLE)}</h1><div class="sub">{html.escape(RUN_LABEL)}</div></div></div>
+<div class="layout">
+  {nav_html}
+  <main class="content">
+    <div class="hero">
+      <h2>Internal Discussion Story Pack</h2>
+      <p>{html.escape(intro_takeaway)}</p>
+    </div>
+    {sections_html}
+  </main>
+</div>
+<script>
+const links = Array.from(document.querySelectorAll('[data-nav-link]'));
+const sections = links.map(link => document.getElementById(link.dataset.navLink)).filter(Boolean);
+const setActive = (id) => {{
+  links.forEach(link => link.classList.toggle('active', link.dataset.navLink === id));
+}};
+if (sections.length) {{
+  const observer = new IntersectionObserver((entries) => {{
+    const visible = entries
+      .filter(entry => entry.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (visible) setActive(visible.target.id);
+  }}, {{rootMargin: '-20% 0px -65% 0px', threshold: [0.1, 0.25, 0.5, 0.75]}});
+  sections.forEach(section => observer.observe(section));
+  setActive(sections[0].id);
+}}
+</script>
 </body>
 </html>'''
 
@@ -333,29 +394,6 @@ def build_executive(ctx: Ctx) -> str:
         ])
     return ''.join([
         '<div class="metrics">' + ''.join(metrics) + '</div>' if metrics else '',
-        page_frame(
-            assumptions=[
-                "This page is a synthesis layer, not a replacement for the detailed evidence pages.",
-                "The current 4-file scope is strongest for operations and service insights, not full commercial relationship analytics.",
-            ],
-            inputs=[
-                "E11_StoryNumbers",
-                "D15_GenAI_Evidence",
-                "4_JoinScorecard",
-            ],
-            logic=[
-                "Pull the smallest set of headline metrics that anchor scale, operational pain, and evidence-backed opportunity.",
-                "Use the join scorecard and evidence table to avoid overclaiming from weakly-linked or thin signals.",
-            ],
-            message=[
-                "The story is strong enough for internal alignment because the operational pain is real, concentrated, and measurable.",
-                "Cases are the core signal, email text is usable after preprocessing, and the deposit book is concentrated enough to support targeted pilots.",
-            ],
-            next_steps=[
-                "Use this page as the starting point for internal walk-throughs, then move immediately into the cases and friction pages.",
-                "Avoid debating individual use cases here; use this page to agree on the broad shape of the opportunity.",
-            ],
-        ),
         section("Top Findings", bullets([
             "Cases provide the strongest internal signal: 3 months of operational history with rich subject, timing, and workload detail.",
             "The main business story is operational friction, backlog growth, and where that friction sits by subject and by client.",
@@ -378,30 +416,6 @@ def build_scope(ctx: Ctx) -> str:
     ]:
         summaries.append({"File": label, "Status": "Loaded" if not df.empty else "Missing", "Usable Columns": len(df) if not df.empty else "", "Sheet": f"{label} vitals"})
     return ''.join([
-        page_frame(
-            assumptions=[
-                "This is the single source of truth for data scope, reliability, and known caveats.",
-                "Later pages should not repeat these caveats unless a page-specific warning materially changes interpretation.",
-            ],
-            inputs=[
-                "1A_PMC_Vitals, 1B_HOA_Vitals, 1C_Case_Vitals, 1D_Email_Vitals",
-                "2_DateCoverage",
-                "4_JoinScorecard",
-                "E10_Completeness",
-            ],
-            logic=[
-                "Establish what is snapshot vs event data, then show whether the main analytical joins are trustworthy enough to support the story.",
-                "Capture reliability issues early so downstream pages can stay insight-heavy rather than caveat-heavy.",
-            ],
-            message=[
-                "The dataset is strong enough for internal use-case discovery, but it is not a universal source for every commercial or operational claim.",
-                "The main join graph is usable; the main limitations are time-window scope, text preprocessing needs, and a few entity/deposit anomalies.",
-            ],
-            next_steps=[
-                "Use this page to settle any questions about scope before debating insights or use cases.",
-                "Keep a running punch list of data cleanup items, but do not let that punch list stall the operational story.",
-            ],
-        ),
         section("File Coverage Summary", table_html(pd.DataFrame(summaries), max_rows=10)),
         section("Date Coverage", table_html(ctx.internal.get("2_DateCoverage"), max_rows=30)),
         section("Join Reliability", table_html(ctx.internal.get("4_JoinScorecard"), max_rows=12)),
@@ -419,25 +433,6 @@ def build_scope(ctx: Ctx) -> str:
 
 def build_population(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Internal/system cases should not be mixed into the core client-facing operating narrative.",
-            ],
-            inputs=[
-                "D01_PopulationSplit",
-            ],
-            logic=[
-                "Separate client workload from internal/system-generated workload before interpreting backlog, subject mix, or GenAI relevance.",
-            ],
-            message=[
-                "Client-only cases are slower, operationally richer, and more relevant to business value than internal/system cases.",
-                "If later pages are not client-filtered, they will overstate some pain points and mis-prioritize interventions.",
-            ],
-            next_steps=[
-                "Use the client-only lens as the default for all operational interpretation.",
-                "Keep internal/system cases as a separate stream for automation and process noise analysis.",
-            ],
-        ),
         section("Population Split", '<p>The operational and GenAI story should be anchored on client cases, with internal/system cases handled separately.</p>' + table_html(ctx.cases.get("D01_PopulationSplit"), max_rows=30)),
         section("Interpretation", bullets([
             "Client-only metrics should drive backlog, SLA, and subject prioritization.",
@@ -449,25 +444,6 @@ def build_population(ctx: Ctx) -> str:
 
 def build_weekly(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "The weekly view is the cleanest way to show pace, queue growth, and whether the operation is truly catching up.",
-            ],
-            inputs=[
-                "D02_ClientWeekly",
-            ],
-            logic=[
-                "Compare created, resolved, backlog proxy, and still-open patterns over time rather than relying on point-in-time case counts.",
-            ],
-            message=[
-                "The team is working volume consistently, but the queue is not being fully cleared.",
-                "This is the operational-leverage page: even modest cycle-time improvements would compound against backlog growth.",
-            ],
-            next_steps=[
-                "Use this page to justify why productivity-focused GenAI use cases matter even if median resolution times look reasonable.",
-                "Track whether the backlog growth is driven by specific subjects, pods, or clients in later pages.",
-            ],
-        ),
         evidence_section(
             "Weekly Client Case Trend",
             "This is the operating heartbeat of the business. It shows whether inflow, throughput, and queue growth are moving together or diverging over the 3-month window.",
@@ -484,27 +460,6 @@ def build_weekly(ctx: Ctx) -> str:
 
 def build_subjects(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Subject is the cleanest operational segmentation axis in the current data.",
-                "GenAI suitability is driven by both workflow shape and text coverage, not by subject counts alone.",
-            ],
-            inputs=[
-                "D03_SubjectDeep",
-                "D10_OriginXSubject",
-            ],
-            logic=[
-                "Group work by subject, compare volume to cycle-time tail behavior, then layer in text-field coverage and origin mix.",
-            ],
-            message=[
-                "The operation is not uniformly broken; it splits into fast/repetitive, fat-tail, and structurally slow process families.",
-                "GenAI should target the fat-tail and repetitive classes first, while the structurally slow classes need process redesign support.",
-            ],
-            next_steps=[
-                "Use this page to shortlist 3-5 subjects for pilot design.",
-                "Do not greenlight a single generic copilot across all subjects; keep the pilot subject-specific.",
-            ],
-        ),
         evidence_section(
             "Subject-Level Friction Profile",
             "This table is here to separate high-volume repetitive work from genuinely slow or tail-heavy processes. It is the core prioritization lens for AI-assisted operations.",
@@ -527,26 +482,6 @@ def build_subjects(ctx: Ctx) -> str:
 
 def build_sla(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "SLA breach patterns and backlog aging are stronger pain indicators than average resolution time.",
-            ],
-            inputs=[
-                "D06_SLA_Breach",
-                "D07_BacklogDetail",
-            ],
-            logic=[
-                "Show where the queue is not just active, but persistently late and aging beyond reasonable operating thresholds.",
-            ],
-            message=[
-                "This page converts friction into urgency.",
-                "Subjects with high breach rates and old unresolved tails are the clearest targets for escalation prediction, queue nudging, and workflow intervention.",
-            ],
-            next_steps=[
-                "Anchor escalation and SLA-breach use-case discussions here.",
-                "Use the oldest unresolved subject/client combinations as candidate pilot queues.",
-            ],
-        ),
         evidence_section(
             "SLA Breach Profile",
             "This table is not about average performance. It isolates the subjects and queues that are breaking expected service thresholds often enough to matter.",
@@ -565,28 +500,6 @@ def build_sla(ctx: Ctx) -> str:
 
 def build_workload(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Workload shape matters because a useful copilot must land where the operation actually experiences volume concentration.",
-            ],
-            inputs=[
-                "D04_DayOfWeek",
-                "D05_HourlyPattern",
-                "D09_OwnerWorkload",
-                "D08_Retouch",
-            ],
-            logic=[
-                "Use temporal concentration and owner/pod skew to show where staffing or AI support would actually be felt.",
-            ],
-            message=[
-                "This is a weekday, morning-heavy operation with meaningful owner/pod concentration.",
-                "The core problem looks like throughput and distribution, not poor resolution quality or extensive rework.",
-            ],
-            next_steps=[
-                "Use this page to think about where real-time triage or summarization would have the most operational impact.",
-                "Investigate whether slow pods are slow because of case mix, geography, or staffing/capacity.",
-            ],
-        ),
         evidence_section(
             "Day-of-Week Pattern",
             "This table shows whether the work is evenly distributed across the week or whether operational pressure is concentrated into specific days.",
@@ -617,29 +530,6 @@ def build_workload(ctx: Ctx) -> str:
 def build_email(ctx: Ctx) -> str:
     text_stats = ctx.internal.get("11_TextFieldStats")
     return ''.join([
-        page_frame(
-            assumptions=[
-                "The email file is a one-day communication sample, so this page is about text feasibility and communication burden, not long-run trend.",
-            ],
-            inputs=[
-                "D11_EmailOverview",
-                "D12_EmailCaseSubjects",
-                "D13_EmailBurden",
-                "D14_EmailTextSamples",
-                "11_TextFieldStats",
-            ],
-            logic=[
-                "Evaluate whether the text exists, whether it is rich enough after preprocessing, and which case types generate the most communication load.",
-            ],
-            message=[
-                "Email is the strongest current language source for GenAI in this dataset.",
-                "The main gating requirement is not data existence; it is reliable HTML stripping and banner removal.",
-            ],
-            next_steps=[
-                "Use this page to justify summarization and draft-assist experiments.",
-                "Do not frame email findings as time-series results; keep them in the communication-feasibility lane.",
-            ],
-        ),
         evidence_section(
             "Email Overview",
             "This table establishes the size and character of the one-day communication sample. It is here to anchor how much email-linked operating burden is visible at all.",
@@ -681,26 +571,6 @@ def build_email(ctx: Ctx) -> str:
 
 def build_deposits(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Economic concentration changes the priority of operational pain; identical friction has different meaning on a $300M client vs a $50K client.",
-            ],
-            inputs=[
-                "E01_DepositConcentr",
-                "E02_TopPMCs",
-            ],
-            logic=[
-                "First quantify how concentrated the book is, then name the clients carrying that concentration and show their operating footprint.",
-            ],
-            message=[
-                "This is not a flat book. A small number of PMCs carry a disproportionate share of value.",
-                "That makes client selection critical for any GenAI pilot or RM intervention story.",
-            ],
-            next_steps=[
-                "Use this page to separate strategically important clients from the long tail before deciding where to pilot.",
-                "Flag any large anomalous entities for cleanup so they do not distort leadership discussions.",
-            ],
-        ),
         evidence_section(
             "Deposit Concentration",
             "This table quantifies how top-heavy the book is. It is here because operational friction has different strategic importance depending on where value sits.",
@@ -719,26 +589,6 @@ def build_deposits(ctx: Ctx) -> str:
 
 def build_friction_value(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Operational friction should be evaluated relative to relationship value, not in isolation.",
-            ],
-            inputs=[
-                "E03_FrictionValue",
-                "E07_HierarchyDepth",
-            ],
-            logic=[
-                "Combine cases, deposits, and entity complexity so prioritization reflects both pain and business importance.",
-            ],
-            message=[
-                "This page is where the operational story meets the client/economic story.",
-                "The right pilot candidates are not merely noisy clients; they are valuable clients with meaningful, repeated friction.",
-            ],
-            next_steps=[
-                "Use this page to shortlist pilot PMCs and to identify low-value/high-friction relationships for review.",
-                "Check whether high-friction PMCs cluster in particular subjects, platforms, or states.",
-            ],
-        ),
         evidence_section(
             "Friction vs Value",
             "This is the pilot-selection table. It brings operational burden and client value together so the discussion stays anchored on where intervention matters most.",
@@ -761,28 +611,6 @@ def build_friction_value(ctx: Ctx) -> str:
 
 def build_geo_rm(ctx: Ctx) -> str:
     return ''.join([
-        page_frame(
-            assumptions=[
-                "Geography, RM coverage, and platform mix are context layers that explain where friction happens and how interventions should land.",
-            ],
-            inputs=[
-                "E04_StateProfile",
-                "E05_RM_Coverage",
-                "E08_PlatformMix",
-                "E09_PodGeography",
-            ],
-            logic=[
-                "Bridge the entity/economic picture to market footprint, RM practice, platform heterogeneity, and pod geography.",
-            ],
-            message=[
-                "This page turns the client list into an operating map.",
-                "It also surfaces a second story beyond GenAI: RM coverage discipline and geographic concentration are themselves material management issues.",
-            ],
-            next_steps=[
-                "Use this page to connect internal operational burden to your external market story.",
-                "Treat stale RM coverage and concentrated high-friction states as candidate management actions, not just analytics findings.",
-            ],
-        ),
         evidence_section(
             "State Profile",
             "This table is the internal operating footprint by geography. It helps connect external market attractiveness with where WAB already carries entity concentration.",
@@ -818,28 +646,6 @@ def build_usecases(ctx: Ctx) -> str:
         ctx.cases.get("D15_GenAI_Evidence"),
         max_rows=20,
     )]
-    parts.insert(0, page_frame(
-        assumptions=[
-            "This page is a translation layer from observed data signals to practical GenAI opportunities.",
-            "The goal is not to prove every use case, but to sort which ones are strongly evidenced, partially evidenced, or still outside the current data boundary.",
-        ],
-        inputs=[
-            "D15_GenAI_Evidence",
-            "Top 20 v2 (optional)",
-            "Expanded Longlist v2 (optional)",
-        ],
-        logic=[
-            "Start with what the current data directly supports, then map that evidence onto the existing use-case taxonomy if available.",
-        ],
-        message=[
-            "A small number of use cases are strongly supported already: routing/classification, summarization, missing-info detection, escalation prediction, and RM briefing.",
-            "The rest should be treated as adjacent hypotheses or future-state ideas until supported by broader data access.",
-        ],
-        next_steps=[
-            "Use this page to converge on 3-5 pilots, not to reopen the full longlist.",
-            "Keep a clear line between evidence-backed near-term candidates and strategically important but under-evidenced use cases.",
-        ],
-    ))
     parts.append(section("How to Read the Opportunity Map", bullets([
         "Strongly evidenced now: directly supported by the current 4-file scope.",
         "Partially evidenced: directionally supported but still missing history, labels, or process context.",
@@ -913,34 +719,301 @@ def build_appendix_methods(ctx: Ctx) -> str:
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
-def write_page(ctx: Ctx, slug: str, title: str, takeaway: str, nav: list[tuple[str, str]], builder: Callable[[Ctx], str]) -> None:
-    html_text = page_template(title, takeaway, builder(ctx), slug, nav)
-    (ctx.outdir / f"{slug}.html").write_text(html_text, encoding="utf-8")
+def render_story_section(ctx: Ctx, meta: dict[str, object]) -> str:
+    slug = str(meta["slug"])
+    title = str(meta["title"])
+    takeaway = str(meta["takeaway"])
+    body = meta["renderer"](ctx)
+    return (
+        f'<section id="section-{html.escape(slug)}" class="story-section">'
+        f'<div class="story-section-header"><h2>{html.escape(title)}</h2><p>{html.escape(takeaway)}</p></div>'
+        f'{section_frame(meta)}'
+        f'{body}'
+        '</section>'
+    )
+
+
+SECTION_REGISTRY: list[dict[str, object]] = [
+    {
+        "slug": "executive_summary",
+        "title": "Executive Summary",
+        "nav_label": "Executive Summary",
+        "takeaway": "A full-data, internal discussion view of what the four files support and where GenAI opportunities are strongest.",
+        "assumptions": [
+            "This section is a synthesis layer, not a replacement for the detailed evidence sections.",
+            "The current 4-file scope is strongest for operations and service insights, not full commercial relationship analytics.",
+        ],
+        "inputs": ["E11_StoryNumbers", "D15_GenAI_Evidence", "4_JoinScorecard"],
+        "logic": [
+            "Pull the smallest set of headline metrics that anchor scale, operational pain, and evidence-backed opportunity.",
+            "Use the join scorecard and evidence table to avoid overclaiming from weakly-linked or thin signals.",
+        ],
+        "director_readout": [
+            "The story is strong enough for internal alignment because the operational pain is real, concentrated, and measurable.",
+            "Cases are the core signal, email text is usable after preprocessing, and the deposit book is concentrated enough to support targeted pilots.",
+        ],
+        "next_steps": [
+            "Use this section as the starting point for internal walk-throughs, then move immediately into the cases and friction sections.",
+            "Avoid debating individual use cases here; use this section to agree on the broad shape of the opportunity.",
+        ],
+        "renderer": build_executive,
+    },
+    {
+        "slug": "scope_reliability",
+        "title": "Data Scope, Caveats, and Join Reliability",
+        "nav_label": "Scope and Reliability",
+        "takeaway": "This section defines what the data is, what it is not, and how much trust to place in the main join paths.",
+        "assumptions": [
+            "This is the single source of truth for data scope, reliability, and known caveats.",
+            "Later sections should not repeat these caveats unless a section-specific warning materially changes interpretation.",
+        ],
+        "inputs": ["1A_PMC_Vitals, 1B_HOA_Vitals, 1C_Case_Vitals, 1D_Email_Vitals", "2_DateCoverage", "4_JoinScorecard", "E10_Completeness"],
+        "logic": [
+            "Establish what is snapshot vs event data, then show whether the main analytical joins are trustworthy enough to support the story.",
+            "Capture reliability issues early so downstream sections can stay insight-heavy rather than caveat-heavy.",
+        ],
+        "director_readout": [
+            "The dataset is strong enough for internal use-case discovery, but it is not a universal source for every commercial or operational claim.",
+            "The main join graph is usable; the main limitations are time-window scope, text preprocessing needs, and a few entity/deposit anomalies.",
+        ],
+        "next_steps": [
+            "Use this section to settle any questions about scope before debating insights or use cases.",
+            "Keep a running punch list of data cleanup items, but do not let that punch list stall the operational story.",
+        ],
+        "renderer": build_scope,
+    },
+    {
+        "slug": "case_population",
+        "title": "Case Population and Operating Baseline",
+        "nav_label": "Case Population",
+        "takeaway": "Client-only cases should anchor the operational story; internal/system cases distort the raw view.",
+        "assumptions": ["Internal/system cases should not be mixed into the core client-facing operating narrative."],
+        "inputs": ["D01_PopulationSplit"],
+        "logic": ["Separate client workload from internal/system-generated workload before interpreting backlog, subject mix, or GenAI relevance."],
+        "director_readout": [
+            "Client-only cases are slower, operationally richer, and more relevant to business value than internal/system cases.",
+            "If later sections are not client-filtered, they will overstate some pain points and mis-prioritize interventions.",
+        ],
+        "next_steps": [
+            "Use the client-only lens as the default for all operational interpretation.",
+            "Keep internal/system cases as a separate stream for automation and process noise analysis.",
+        ],
+        "renderer": build_population,
+    },
+    {
+        "slug": "weekly_backlog",
+        "title": "Weekly Volume and Backlog",
+        "nav_label": "Weekly Backlog",
+        "takeaway": "The operational problem is not lack of activity; it is persistent backlog accumulation against otherwise steady inflow.",
+        "assumptions": ["The weekly view is the cleanest way to show pace, queue growth, and whether the operation is truly catching up."],
+        "inputs": ["D02_ClientWeekly"],
+        "logic": ["Compare created, resolved, backlog proxy, and still-open patterns over time rather than relying on point-in-time case counts."],
+        "director_readout": [
+            "The team is working volume consistently, but the queue is not being fully cleared.",
+            "This is the operational-leverage section: even modest cycle-time improvements would compound against backlog growth.",
+        ],
+        "next_steps": [
+            "Use this section to justify why productivity-focused GenAI use cases matter even if median resolution times look reasonable.",
+            "Track whether the backlog growth is driven by specific subjects, pods, or clients in later sections.",
+        ],
+        "renderer": build_weekly,
+    },
+    {
+        "slug": "subject_friction",
+        "title": "Subject-Level Friction",
+        "nav_label": "Subject Friction",
+        "takeaway": "Subjects split into fast/repetitive, fat-tail, and structurally slow groups; GenAI should target the right group.",
+        "assumptions": [
+            "Subject is the cleanest operational segmentation axis in the current data.",
+            "GenAI suitability is driven by both workflow shape and text coverage, not by subject counts alone.",
+        ],
+        "inputs": ["D03_SubjectDeep", "D10_OriginXSubject"],
+        "logic": ["Group work by subject, compare volume to cycle-time tail behavior, then layer in text-field coverage and origin mix."],
+        "director_readout": [
+            "The operation is not uniformly broken; it splits into fast/repetitive, fat-tail, and structurally slow process families.",
+            "GenAI should target the fat-tail and repetitive classes first, while the structurally slow classes need process redesign support.",
+        ],
+        "next_steps": [
+            "Use this section to shortlist 3-5 subjects for pilot design.",
+            "Do not greenlight a single generic copilot across all subjects; keep the pilot subject-specific.",
+        ],
+        "renderer": build_subjects,
+    },
+    {
+        "slug": "sla_aging",
+        "title": "SLA Breach and Aging",
+        "nav_label": "SLA and Aging",
+        "takeaway": "Aged unresolved work and subject-specific breach patterns are the clearest pain signals in the dataset.",
+        "assumptions": ["SLA breach patterns and backlog aging are stronger pain indicators than average resolution time."],
+        "inputs": ["D06_SLA_Breach", "D07_BacklogDetail"],
+        "logic": ["Show where the queue is not just active, but persistently late and aging beyond reasonable operating thresholds."],
+        "director_readout": [
+            "This section converts friction into urgency.",
+            "Subjects with high breach rates and old unresolved tails are the clearest targets for escalation prediction, queue nudging, and workflow intervention.",
+        ],
+        "next_steps": [
+            "Anchor escalation and SLA-breach use-case discussions here.",
+            "Use the oldest unresolved subject/client combinations as candidate pilot queues.",
+        ],
+        "renderer": build_sla,
+    },
+    {
+        "slug": "workload_capacity",
+        "title": "Workload Patterns and Capacity Signals",
+        "nav_label": "Workload Patterns",
+        "takeaway": "When work arrives and who carries it helps explain where service strain accumulates.",
+        "assumptions": ["Workload shape matters because a useful copilot must land where the operation actually experiences volume concentration."],
+        "inputs": ["D04_DayOfWeek", "D05_HourlyPattern", "D09_OwnerWorkload", "D08_Retouch"],
+        "logic": ["Use temporal concentration and owner/pod skew to show where staffing or AI support would actually be felt."],
+        "director_readout": [
+            "This is a weekday, morning-heavy operation with meaningful owner/pod concentration.",
+            "The core problem looks like throughput and distribution, not poor resolution quality or extensive rework.",
+        ],
+        "next_steps": [
+            "Use this section to think about where real-time triage or summarization would have the most operational impact.",
+            "Investigate whether slow pods are slow because of case mix, geography, or staffing/capacity.",
+        ],
+        "renderer": build_workload,
+    },
+    {
+        "slug": "email_text",
+        "title": "Email and Text Feasibility",
+        "nav_label": "Email and Text",
+        "takeaway": "Email text is the richest current language asset, but preprocessing is required before it becomes a GenAI input.",
+        "assumptions": ["The email file is a one-day communication sample, so this section is about text feasibility and communication burden, not long-run trend."],
+        "inputs": ["D11_EmailOverview", "D12_EmailCaseSubjects", "D13_EmailBurden", "D14_EmailTextSamples", "11_TextFieldStats"],
+        "logic": ["Evaluate whether the text exists, whether it is rich enough after preprocessing, and which case types generate the most communication load."],
+        "director_readout": [
+            "Email is the strongest current language source for GenAI in this dataset.",
+            "The main gating requirement is not data existence; it is reliable HTML stripping and banner removal.",
+        ],
+        "next_steps": [
+            "Use this section to justify summarization and draft-assist experiments.",
+            "Do not frame email findings as time-series results; keep them in the communication-feasibility lane.",
+        ],
+        "renderer": build_email,
+    },
+    {
+        "slug": "deposit_clients",
+        "title": "Deposit and Client Concentration",
+        "nav_label": "Deposit and Clients",
+        "takeaway": "Economic concentration changes how operational friction should be prioritized across the client base.",
+        "assumptions": ["Economic concentration changes the priority of operational pain; identical friction has different meaning on a $300M client vs a $50K client."],
+        "inputs": ["E01_DepositConcentr", "E02_TopPMCs"],
+        "logic": ["First quantify how concentrated the book is, then name the clients carrying that concentration and show their operating footprint."],
+        "director_readout": [
+            "This is not a flat book. A small number of PMCs carry a disproportionate share of value.",
+            "That makes client selection critical for any GenAI pilot or RM intervention story.",
+        ],
+        "next_steps": [
+            "Use this section to separate strategically important clients from the long tail before deciding where to pilot.",
+            "Flag any large anomalous entities for cleanup so they do not distort leadership discussions.",
+        ],
+        "renderer": build_deposits,
+    },
+    {
+        "slug": "friction_value",
+        "title": "Friction vs Value Prioritization",
+        "nav_label": "Friction vs Value",
+        "takeaway": "Not all friction deserves the same response; the key is where friction intersects relationship value.",
+        "assumptions": ["Operational friction should be evaluated relative to relationship value, not in isolation."],
+        "inputs": ["E03_FrictionValue", "E07_HierarchyDepth"],
+        "logic": ["Combine cases, deposits, and entity complexity so prioritization reflects both pain and business importance."],
+        "director_readout": [
+            "This section is where the operational story meets the client/economic story.",
+            "The right pilot candidates are not merely noisy clients; they are valuable clients with meaningful, repeated friction.",
+        ],
+        "next_steps": [
+            "Use this section to shortlist pilot PMCs and to identify low-value/high-friction relationships for review.",
+            "Check whether high-friction PMCs cluster in particular subjects, platforms, or states.",
+        ],
+        "renderer": build_friction_value,
+    },
+    {
+        "slug": "geography_rm_platform",
+        "title": "Geography, RM Coverage, and Platform Signals",
+        "nav_label": "Geo RM Platform",
+        "takeaway": "Geography, relationship coverage, and platform mix provide context for where pilots should land first.",
+        "assumptions": ["Geography, RM coverage, and platform mix are context layers that explain where friction happens and how interventions should land."],
+        "inputs": ["E04_StateProfile", "E05_RM_Coverage", "E08_PlatformMix", "E09_PodGeography"],
+        "logic": ["Bridge the entity/economic picture to market footprint, RM practice, platform heterogeneity, and pod geography."],
+        "director_readout": [
+            "This section turns the client list into an operating map.",
+            "It also surfaces a second story beyond GenAI: RM coverage discipline and geographic concentration are themselves material management issues.",
+        ],
+        "next_steps": [
+            "Use this section to connect internal operational burden to your external market story.",
+            "Treat stale RM coverage and concentrated high-friction states as candidate management actions, not just analytics findings.",
+        ],
+        "renderer": build_geo_rm,
+    },
+    {
+        "slug": "genai_opportunity_map",
+        "title": "GenAI Opportunity Map",
+        "nav_label": "GenAI Map",
+        "takeaway": "Current data strongly supports some use cases, partially supports others, and leaves some outside the current evidence boundary.",
+        "assumptions": [
+            "This section is a translation layer from observed data signals to practical GenAI opportunities.",
+            "The goal is not to prove every use case, but to sort which ones are strongly evidenced, partially evidenced, or still outside the current data boundary.",
+        ],
+        "inputs": ["D15_GenAI_Evidence", "Top 20 v2 (optional)", "Expanded Longlist v2 (optional)"],
+        "logic": ["Start with what the current data directly supports, then map that evidence onto the existing use-case taxonomy if available."],
+        "director_readout": [
+            "A small number of use cases are strongly supported already: routing/classification, summarization, missing-info detection, escalation prediction, and RM briefing.",
+            "The rest should be treated as adjacent hypotheses or future-state ideas until supported by broader data access.",
+        ],
+        "next_steps": [
+            "Use this section to converge on 3-5 pilots, not to reopen the full longlist.",
+            "Keep a clear line between evidence-backed near-term candidates and strategically important but under-evidenced use cases.",
+        ],
+        "renderer": build_usecases,
+    },
+    {
+        "slug": "appendix_tables",
+        "title": "Appendix: Detailed Tables",
+        "nav_label": "Appendix Tables",
+        "takeaway": "Supporting tables for readers who want more of the underlying output without leaving the HTML pack.",
+        "assumptions": ["This appendix is for depth and transparency, not for first-pass storytelling."],
+        "inputs": ["8_PMC_Concentration", "9_NAICS_Diagnostic", "E11_StoryNumbers", "E10_Completeness"],
+        "logic": ["Keep supporting evidence accessible without forcing readers back into the Excel workbooks."],
+        "director_readout": [
+            "This section supports discussion when someone wants to go deeper on specific supporting tables.",
+            "It should not lead the meeting; it should support it.",
+        ],
+        "next_steps": [
+            "Use this appendix to answer detail questions without cluttering the core flow.",
+            "Keep adding only supporting evidence here, not new narrative layers.",
+        ],
+        "renderer": build_appendix_tables,
+    },
+    {
+        "slug": "appendix_methods",
+        "title": "Appendix: Methods and Definitions",
+        "nav_label": "Appendix Methods",
+        "takeaway": "Definitions, input assumptions, and generator-level expectations.",
+        "assumptions": ["Method notes belong in one place so the main sections stay readable."],
+        "inputs": ["Generator configuration", "Input workbook paths", "Section rendering rules"],
+        "logic": ["Keep portability, assumptions, and interpretation rules transparent in one methods appendix."],
+        "director_readout": [
+            "This section exists so the rest of the artifact can stay focused on insight rather than mechanics.",
+        ],
+        "next_steps": [
+            "Use this appendix when questions arise about provenance, method, or expected workbook inputs.",
+        ],
+        "renderer": build_appendix_methods,
+    },
+]
 
 
 def main() -> None:
     ctx = Ctx()
-    pages: list[tuple[str, str, str, Callable[[Ctx], str]]] = [
-        ("executive_summary", "Executive Summary", "A full-data, internal discussion view of what the four files support and where GenAI opportunities are strongest.", build_executive),
-        ("scope_reliability", "Data Scope, Caveats, and Join Reliability", "This page defines what the data is, what it is not, and how much trust to place in the main join paths.", build_scope),
-        ("case_population", "Case Population and Operating Baseline", "Client-only cases should anchor the operational story; internal/system cases distort the raw view.", build_population),
-        ("weekly_backlog", "Weekly Volume and Backlog", "The operational problem is not lack of activity; it is persistent backlog accumulation against otherwise steady inflow.", build_weekly),
-        ("subject_friction", "Subject-Level Friction", "Subjects split into fast/repetitive, fat-tail, and structurally slow groups; GenAI should target the right group.", build_subjects),
-        ("sla_aging", "SLA Breach and Aging", "Aged unresolved work and subject-specific breach patterns are the clearest pain signals in the dataset.", build_sla),
-        ("workload_capacity", "Workload Patterns and Capacity Signals", "When work arrives and who carries it helps explain where service strain accumulates.", build_workload),
-        ("email_text", "Email and Text Feasibility", "Email text is the richest current language asset, but preprocessing is required before it becomes a GenAI input.", build_email),
-        ("deposit_clients", "Deposit and Client Concentration", "Economic concentration changes how operational friction should be prioritized across the client base.", build_deposits),
-        ("friction_value", "Friction vs Value Prioritization", "Not all friction deserves the same response; the key is where friction intersects relationship value.", build_friction_value),
-        ("geography_rm_platform", "Geography, RM Coverage, and Platform Signals", "Geography, relationship coverage, and platform mix provide context for where pilots should land first.", build_geo_rm),
-        ("genai_opportunity_map", "GenAI Opportunity Map", "Current data strongly supports some use cases, partially supports others, and leaves some outside the current evidence boundary.", build_usecases),
-        ("appendix_tables", "Appendix: Detailed Tables", "Supporting tables for readers who want more of the underlying output without leaving the HTML pack.", build_appendix_tables),
-        ("appendix_methods", "Appendix: Methods and Definitions", "Definitions, input assumptions, and generator-level expectations.", build_appendix_methods),
-    ]
-    nav = [(slug, label) for slug, label, _, _ in pages]
-    for slug, label, takeaway, builder in pages:
-        write_page(ctx, slug, label, takeaway, nav, builder)
-    (ctx.outdir / "index.html").write_text(f'<!doctype html><html><head><meta http-equiv="refresh" content="0; url={pages[0][0]}.html"></head><body><a href="{pages[0][0]}.html">Open story</a></body></html>', encoding="utf-8")
-    print(f"HTML story written to: {ctx.outdir}")
+    nav = [(str(section["slug"]), str(section["nav_label"])) for section in SECTION_REGISTRY]
+    sections_html = ''.join(render_story_section(ctx, section) for section in SECTION_REGISTRY)
+    intro = "One self-contained discussion artifact that connects data scope, operational pain, client concentration, and GenAI opportunity in a single shareable file."
+    story_html = story_template(sections_html, nav, intro)
+    (ctx.outdir / "story.html").write_text(story_html, encoding="utf-8")
+    (ctx.outdir / "index.html").write_text('<!doctype html><html><head><meta http-equiv="refresh" content="0; url=story.html"></head><body><a href="story.html">Open story</a></body></html>', encoding="utf-8")
+    print(f"HTML story written to: {ctx.outdir / 'story.html'}")
 
 
 if __name__ == "__main__":
