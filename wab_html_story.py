@@ -175,10 +175,8 @@ def section_frame(meta: dict[str, object]) -> str:
     return (
         '<div class="frame-grid">'
         + framing_panel("Assumptions", meta.get("assumptions", []))
-        + framing_panel("Inputs Used", meta.get("inputs", []))
-        + framing_panel("Logic", meta.get("logic", []))
-        + framing_panel("Director Readout", meta.get("director_readout", []))
-        + framing_panel("Suggested Next Steps", meta.get("next_steps", []))
+        + framing_panel("Key Takeaways", meta.get("key_takeaways", meta.get("director_readout", [])))
+        + framing_panel("Next Steps", meta.get("next_steps", []))
         + '</div>'
     )
 
@@ -268,10 +266,10 @@ def naics_appendix_html(df: pd.DataFrame) -> str:
 
 
 def story_template(sections_html: str, nav: list[tuple[str, str]], intro_takeaway: str) -> str:
-    nav_html = '<nav class="side-nav">' + ''.join(
-        f'<a data-nav-link="section-{slug}" href="#section-{slug}">{html.escape(label)}</a>'
+    nav_html = '<div class="nav-bar"><div class="nav-shell"><nav class="top-nav">' + ''.join(
+        f'<a href="#section-{slug}">{html.escape(label)}</a>'
         for slug, label in nav
-    ) + '</nav>'
+    ) + '</nav></div></div>'
     return f'''<!doctype html>
 <html lang="en">
 <head>
@@ -279,27 +277,26 @@ def story_template(sections_html: str, nav: list[tuple[str, str]], intro_takeawa
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(SITE_TITLE)}</title>
 <style>
-html{{scroll-behavior:smooth}}
 body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;background:#f8fafc;color:#1e293b;line-height:1.5}}
 .top{{background:#0f172a;color:#fff;border-bottom:4px solid #2563eb}}
 .top-shell{{max-width:1600px;margin:0 auto;padding:18px 28px}}
 h1{{margin:0;font-size:30px}}
 .sub{{margin-top:6px;font-size:14px;opacity:.85}}
-.layout{{max-width:1600px;margin:0 auto;display:grid;grid-template-columns:290px minmax(0,1fr);gap:24px;padding:24px 28px 48px}}
-.side-nav{{position:sticky;top:16px;align-self:start;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px;max-height:calc(100vh - 32px);overflow:auto}}
-.side-nav a{{display:block;text-decoration:none;color:#0f172a;border:1px solid transparent;border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:14px}}
-.side-nav a:hover{{background:#f8fafc;border-color:#e2e8f0}}
-.side-nav a.active{{background:#dbeafe;border-color:#60a5fa;font-weight:600}}
-.content{{min-width:0}}
+.nav-bar{{position:sticky;top:0;z-index:10;background:#f8fafc;border-bottom:1px solid #e2e8f0}}
+.nav-shell{{max-width:1600px;margin:0 auto;padding:12px 28px}}
+.top-nav{{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}}
+.top-nav a{{flex:0 0 auto;text-decoration:none;color:#0f172a;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:8px 12px;font-size:14px;white-space:nowrap}}
+.top-nav a:hover{{background:#eff6ff;border-color:#93c5fd}}
+.content{{max-width:1600px;margin:0 auto;padding:24px 28px 48px;min-width:0}}
 .hero,.section,.story-section,.metric,.frame-card{{background:#fff;border:1px solid #e2e8f0;border-radius:16px}}
 .hero{{padding:22px 24px;margin-bottom:20px}}
 .hero h2{{margin:0 0 10px;font-size:26px}}
 .hero p{{margin:0;color:#334155;font-size:16px}}
-.story-section{{padding:22px 24px;margin-bottom:24px;scroll-margin-top:16px}}
+.story-section{{padding:22px 24px;margin-bottom:24px;scroll-margin-top:72px}}
 .story-section-header{{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #e2e8f0}}
 .story-section-header h2{{margin:0 0 8px;font-size:26px}}
 .story-section-header p{{margin:0;color:#475569;font-size:15px}}
-.frame-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0 20px}}
+.frame-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:18px 0 20px}}
 .frame-card{{padding:14px 16px}}
 .frame-card h3{{margin:0 0 10px;font-size:15px;color:#0f172a}}
 .metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0 8px}}
@@ -318,41 +315,21 @@ table.kv th{{width:280px}}
 ul{{margin:8px 0 0 18px;padding:0}}
 li{{margin:6px 0}}
 .empty{{color:#64748b;font-style:italic;padding:6px 0}}
-@media (max-width: 1100px) {{
-  .layout{{grid-template-columns:1fr}}
-  .side-nav{{position:relative;top:auto;max-height:none}}
-}}
+details{{margin-top:8px}}
+summary{{cursor:pointer;font-weight:600;color:#0f172a}}
+.appendix-body{{margin-top:14px}}
 </style>
 </head>
 <body>
 <div class="top"><div class="top-shell"><h1>{html.escape(SITE_TITLE)}</h1><div class="sub">{html.escape(RUN_LABEL)}</div></div></div>
-<div class="layout">
-  {nav_html}
-  <main class="content">
-    <div class="hero">
-      <h2>Internal Discussion Story Pack</h2>
-      <p>{html.escape(intro_takeaway)}</p>
-    </div>
-    {sections_html}
-  </main>
-</div>
-<script>
-const links = Array.from(document.querySelectorAll('[data-nav-link]'));
-const sections = links.map(link => document.getElementById(link.dataset.navLink)).filter(Boolean);
-const setActive = (id) => {{
-  links.forEach(link => link.classList.toggle('active', link.dataset.navLink === id));
-}};
-if (sections.length) {{
-  const observer = new IntersectionObserver((entries) => {{
-    const visible = entries
-      .filter(entry => entry.isIntersecting)
-      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (visible) setActive(visible.target.id);
-  }}, {{rootMargin: '-20% 0px -65% 0px', threshold: [0.1, 0.25, 0.5, 0.75]}});
-  sections.forEach(section => observer.observe(section));
-  setActive(sections[0].id);
-}}
-</script>
+{nav_html}
+<main class="content">
+  <div class="hero">
+    <h2>Internal Discussion Story Pack</h2>
+    <p>{html.escape(intro_takeaway)}</p>
+  </div>
+  {sections_html}
+</main>
 </body>
 </html>'''
 
@@ -724,6 +701,8 @@ def render_story_section(ctx: Ctx, meta: dict[str, object]) -> str:
     title = str(meta["title"])
     takeaway = str(meta["takeaway"])
     body = meta["renderer"](ctx)
+    if slug.startswith("appendix_"):
+        body = f'<details><summary>Open appendix content</summary><div class="appendix-body">{body}</div></details>'
     return (
         f'<section id="section-{html.escape(slug)}" class="story-section">'
         f'<div class="story-section-header"><h2>{html.escape(title)}</h2><p>{html.escape(takeaway)}</p></div>'
