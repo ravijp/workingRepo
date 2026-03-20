@@ -29,6 +29,7 @@ from collections import OrderedDict
 
 import pandas as pd
 import numpy as np
+from openpyxl.styles import Alignment, Font, PatternFill
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
@@ -494,51 +495,103 @@ def build_pmc_concentration(cases, pmc):
 
 
 def build_naics_diagnostic(pmc, hoa):
-    """Sheet 9_NAICS_Diagnostic: NAICS distributions and cross-tab."""
-    parts = []
+    """Sheet 9_NAICS_Diagnostic: normalized long-format NAICS summary and cross-tab.
+
+    The previous implementation stitched multiple table shapes side-by-side into a
+    single worksheet, which made the sheet hard to read in Excel and brittle for
+    HTML consumption. This version emits one consistent long-format table.
+    """
+    rows = []
 
     for label, df in [("PMC", pmc), ("HOA", hoa)]:
+        if df.empty:
+            rows.append({
+                "block": f"{label} NAICS",
+                "row_type": "warning",
+                "item": "",
+                "subitem": "",
+                "count": "",
+                "pct": "",
+                "value": "file not loaded",
+            })
+            continue
+
         naics_col = find_col(df, "NAICS")
-        if not naics_col or df.empty:
-            parts.append(pd.DataFrame({"section": [f"{label} NAICS"], "note": ["NAICS column not found"]}))
+        if not naics_col:
+            rows.append({
+                "block": f"{label} NAICS",
+                "row_type": "warning",
+                "item": "",
+                "subitem": "",
+                "count": "",
+                "pct": "",
+                "value": "NAICS column not found",
+            })
             continue
 
         s = df[naics_col]
         total = len(s)
-        null_n = int(s.isna().sum()) + int((s.astype(str).str.strip() == "").sum())
+        cleaned = s.fillna("(blank)").astype(str).str.strip()
+        cleaned = cleaned.replace("", "(blank)")
+        null_n = int((cleaned == "(blank)").sum())
         null_pct = f"{100 * null_n / total:.1f}%" if total else "N/A"
-        distinct = int(s.nunique(dropna=True))
+        distinct = int(cleaned.replace("(blank)", pd.NA).nunique(dropna=True))
 
-        header = pd.DataFrame({
-            "section": [f"--- {label} NAICS SUMMARY ---"],
-            "value": [f"Total: {total:,} | Null/blank: {null_n:,} ({null_pct}) | Distinct: {distinct}"],
-        })
-        parts.append(header)
+        rows.extend([
+            {"block": f"{label} NAICS Summary", "row_type": "summary", "item": "Total rows", "subitem": "", "count": total, "pct": "", "value": ""},
+            {"block": f"{label} NAICS Summary", "row_type": "summary", "item": "Null / blank rows", "subitem": "", "count": null_n, "pct": null_pct, "value": ""},
+            {"block": f"{label} NAICS Summary", "row_type": "summary", "item": "Distinct non-blank NAICS", "subitem": "", "count": distinct, "pct": "", "value": ""},
+        ])
 
         top_n = 10 if label == "PMC" else 5
-        top = s.fillna("(blank)").astype(str).str.strip().value_counts().head(top_n).reset_index()
-        top.columns = ["naics", "count"]
-        top["pct"] = (top["count"] / total * 100).round(1).astype(str) + "%"
-        top.insert(0, "section", f"{label} Top {top_n}")
-        parts.append(top)
+        top = cleaned.value_counts().head(top_n)
+        for naics, count in top.items():
+            rows.append({
+                "block": f"{label} Top {top_n} NAICS",
+                "row_type": "distribution",
+                "item": naics,
+                "subitem": "",
+                "count": int(count),
+                "pct": f"{100 * count / total:.1f}%",
+                "value": "",
+            })
 
-        # PMC cross-tab: Company Type x NAICS
         if label == "PMC":
             ct_col = find_col(df, "Company Type")
             if ct_col:
                 df2 = df.copy()
-                df2["_naics"] = df2[naics_col].fillna("(blank)").astype(str).str.strip()
-                df2["_ctype"] = df2[ct_col].fillna("(blank)").astype(str).str.strip()
+                df2["_naics"] = cleaned
+                df2["_ctype"] = df2[ct_col].fillna("(blank)").astype(str).str.strip().replace("", "(blank)")
                 top_naics = df2["_naics"].value_counts().head(8).index.tolist()
                 sub = df2[df2["_naics"].isin(top_naics)]
                 ct = pd.crosstab(sub["_ctype"], sub["_naics"])
-                ct_reset = ct.reset_index().rename(columns={"_ctype": "company_type"})
-                ct_reset.insert(0, "section", "PMC CompanyType x NAICS")
-                parts.append(ct_reset)
+                for company_type, ct_row in ct.iterrows():
+                    row_total = int(ct_row.sum())
+                    rows.append({
+                        "block": "PMC CompanyType x NAICS",
+                        "row_type": "cross_tab_total",
+                        "item": company_type,
+                        "subitem": "ALL TOP NAICS",
+                        "count": row_total,
+                        "pct": "",
+                        "value": "",
+                    })
+                    for naics, count in ct_row.items():
+                        if int(count) == 0:
+                            continue
+                        rows.append({
+                            "block": "PMC CompanyType x NAICS",
+                            "row_type": "cross_tab_detail",
+                            "item": company_type,
+                            "subitem": naics,
+                            "count": int(count),
+                            "pct": f"{100 * count / row_total:.1f}%" if row_total else "",
+                            "value": "",
+                        })
 
-    # Combine all parts
-    combined = pd.concat(parts, ignore_index=True, sort=False)
-    return combined
+    if not rows:
+        return pd.DataFrame({"note": ["No NAICS diagnostics available"]})
+    return pd.DataFrame(rows)
 
 
 def build_text_samples(cases, emails):
@@ -877,10 +930,44 @@ def write_sheet(writer, name, df):
         df = pd.DataFrame({"note": ["No data"]})
     df.to_excel(writer, sheet_name=name, index=False, freeze_panes=(1, 0))
     ws = writer.sheets[name]
+    header_fill = PatternFill(fill_type="solid", fgColor="DCE6F1")
+    summary_fill = PatternFill(fill_type="solid", fgColor="EAF2D3")
+    cross_fill = PatternFill(fill_type="solid", fgColor="FCE4D6")
+    warning_fill = PatternFill(fill_type="solid", fgColor="FDE9D9")
+
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
     for i, col_cells in enumerate(ws.columns):
         max_len = max(len(str(cell.value or "")) for cell in col_cells)
         max_len = min(max_len + 2, 60)  # cap width
         ws.column_dimensions[col_cells[0].column_letter].width = max_len
+
+    ws.auto_filter.ref = ws.dimensions
+
+    if name == "9_NAICS_Diagnostic" and "row_type" in df.columns:
+        row_type_idx = list(df.columns).index("row_type") + 1
+        for row_idx in range(2, ws.max_row + 1):
+            row_type = str(ws.cell(row=row_idx, column=row_type_idx).value or "").strip().lower()
+            fill = None
+            font = Font(bold=False)
+            if row_type == "summary":
+                fill = summary_fill
+                font = Font(bold=True)
+            elif row_type == "cross_tab_total":
+                fill = cross_fill
+                font = Font(bold=True)
+            elif row_type == "warning":
+                fill = warning_fill
+                font = Font(bold=True, color="9C0006")
+
+            if fill is not None:
+                for cell in ws[row_idx]:
+                    cell.fill = fill
+                    cell.font = font
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 # ═══════════════════════════════════════════════════════════
