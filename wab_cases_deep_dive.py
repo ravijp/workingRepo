@@ -1,0 +1,1012 @@
+"""
+WAB Cases + Emails Deep Dive — Phase 1 GenAI Use-Case Evidence
+===============================================================
+Standalone VDI script.  Reads Cases + Emails files only.
+Produces one Excel workbook + one markdown summary.
+
+Dependencies: pandas, openpyxl  (standard library otherwise)
+"""
+
+# ┌─────────────────────────────────────────────────────────┐
+# │  EDIT THESE 3 VARIABLES BEFORE RUNNING                  │
+# └─────────────────────────────────────────────────────────┘
+CASE_FILE  = r"C:\Users\YourName\Desktop\AAB All Cases.xlsx"
+EMAIL_FILE = r"C:\Users\YourName\Desktop\ALL EMAIL Files.xlsx"
+OUTPUT_DIR = r"C:\Users\YourName\Desktop\wab_output"
+# ┌─────────────────────────────────────────────────────────┐
+# │  DO NOT EDIT BELOW THIS LINE                            │
+# └─────────────────────────────────────────────────────────┘
+
+import os, re, sys, datetime, warnings, html
+from pathlib import Path
+from collections import OrderedDict
+from io import StringIO
+
+import pandas as pd
+import numpy as np
+
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+OUTPUT_XLSX = os.path.join(OUTPUT_DIR, "wab_cases_deep_dive.xlsx")
+OUTPUT_MD   = os.path.join(OUTPUT_DIR, "wab_cases_deep_dive_summary.md")
+LOG, WARN   = [], []
+TRUNC       = 150
+
+# Known internal / system company names to exclude from client metrics
+INTERNAL_COMPANIES = {"AAB ADMIN", "WAB ADMIN", "AAB ADMIN -", "WAB ADMIN -"}
+
+# ═══════════════════════════════════════════════════════════
+#  UTILITIES
+# ═══════════════════════════════════════════════════════════
+
+def log(m):
+    LOG.append(m); print(m)
+
+def warn(m):
+    WARN.append(m); log(f"  WARNING: {m}")
+
+def trunc(v, n=TRUNC):
+    if pd.isna(v): return ""
+    s = str(v).replace("\r"," ").replace("\n"," ").strip()
+    return s[:n] + "..." if len(s) > n else s
+
+def norm_col(name):
+    if not isinstance(name, str): return ""
+    return re.sub(r"\s+", " ", name.strip().lower())
+
+def find_col(df, *candidates):
+    """Case-insensitive column lookup with partial-match fallback."""
+    lookup = {norm_col(c): c for c in df.columns}
+    for cand in candidates:
+        normed = norm_col(cand)
+        if normed in lookup:
+            return lookup[normed]
+    # partial fallback
+    for cand in candidates:
+        normed = norm_col(cand)
+        for k, v in lookup.items():
+            if normed in k or k in normed:
+                return v
+    return None
+
+def safe_dt(series):
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    try:
+        return pd.to_datetime(series, errors="coerce")
+    except Exception:
+        return pd.Series([pd.NaT]*len(series), index=series.index)
+
+def safe_numeric(series):
+    if pd.api.types.is_numeric_dtype(series):
+        return series
+    return pd.to_numeric(series, errors="coerce")
+
+def strip_html(text):
+    """Strip HTML tags and decode entities.  Best-effort, no external libs."""
+    if pd.isna(text): return ""
+    s = str(text)
+    # remove style/script blocks
+    s = re.sub(r"<(style|script)[^>]*>.*?</\1>", " ", s, flags=re.DOTALL|re.IGNORECASE)
+    # replace br / p / div / tr / li with newline
+    s = re.sub(r"<(br|/p|/div|/tr|/li)[^>]*>", "\n", s, flags=re.IGNORECASE)
+    # strip remaining tags
+    s = re.sub(r"<[^>]+>", " ", s)
+    # decode HTML entities
+    s = html.unescape(s)
+    # collapse whitespace
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n[ \t]+", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+def read_file(path, label):
+    log(f"\nReading {label}: {path}")
+    if not os.path.isfile(path):
+        warn(f"File not found: {path}")
+        return pd.DataFrame()
+    try:
+        df = pd.read_excel(path, header=0, engine="openpyxl")
+    except Exception as e:
+        warn(f"Failed to read {label}: {e}")
+        return pd.DataFrame()
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
+    df = df.dropna(axis=1, how="all")
+    log(f"  Rows: {len(df):,}  |  Columns: {len(df.columns)}")
+    return df
+
+def pct(num, denom):
+    return f"{100*num/denom:.1f}%" if denom else "N/A"
+
+def write_sheet(writer, name, df):
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        df = pd.DataFrame({"note": ["No data"]})
+    # Excel sheet name limit = 31 chars
+    sheet_name = name[:31]
+    df.to_excel(writer, sheet_name=sheet_name, index=False, freeze_panes=(1, 0))
+    ws = writer.sheets[sheet_name]
+    for i, col_cells in enumerate(ws.columns):
+        max_len = max(len(str(cell.value or "")) for cell in col_cells)
+        ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 2, 60)
+
+
+# ═══════════════════════════════════════════════════════════
+#  CASE PREPARATION  — build enriched case DataFrame once
+# ═══════════════════════════════════════════════════════════
+
+def prepare_cases(cases):
+    """Add derived columns to cases.  Returns enriched copy."""
+    df = cases.copy()
+
+    # ── Core columns ──
+    col_map = {
+        "case_number":  find_col(df, "Case Number"),
+        "company":      find_col(df, "Company Name (Company) (Company)", "Company Name", "Customer"),
+        "subject":      find_col(df, "Subject"),
+        "description":  find_col(df, "Description"),
+        "activity_subj": find_col(df, "Activity Subject"),
+        "origin":       find_col(df, "Origin"),
+        "status":       find_col(df, "Status"),
+        "status_reason": find_col(df, "Status Reason"),
+        "created_on":   find_col(df, "Created On"),
+        "modified_on":  find_col(df, "Modified On"),
+        "sla_start":    find_col(df, "SLA Start"),
+        "resolved_on":  find_col(df, "Resolved On"),
+        "resolved_hrs": find_col(df, "Resolved In Hours"),
+        "owner":        find_col(df, "Manager (Owning User) (User)", "Owner"),
+        "pod":          find_col(df, "POD Name (Owning User) (User)", "POD Name"),
+        "last_touch":   find_col(df, "Last Touch"),
+        "last_touch_by": find_col(df, "Last Touch By"),
+        "parent_case":  find_col(df, "Parent Case"),
+        "last_contact":  find_col(df, "Last Contact Attempt"),
+    }
+
+    # ── Derived: dates ──
+    for key in ["created_on", "modified_on", "sla_start", "resolved_on", "last_touch", "last_contact"]:
+        src = col_map.get(key)
+        if src:
+            df[f"_{key}_dt"] = safe_dt(df[src])
+
+    # ── Derived: hours ──
+    src = col_map.get("resolved_hrs")
+    if src:
+        df["_hours"] = safe_numeric(df[src])
+
+    # ── Derived: is_resolved ──
+    resolved_kw = ["resolved", "closed", "cancelled", "canceled"]
+    src_sr = col_map.get("status_reason") or col_map.get("status")
+    if src_sr:
+        df["_is_resolved"] = df[src_sr].fillna("").astype(str).str.lower().apply(
+            lambda x: any(kw in x for kw in resolved_kw))
+    else:
+        df["_is_resolved"] = True  # assume resolved if no status
+
+    # ── Derived: is_internal ──
+    src_co = col_map.get("company")
+    if src_co:
+        df["_company_clean"] = df[src_co].fillna("(blank)").astype(str).str.strip()
+        df["_is_internal"] = df["_company_clean"].str.upper().apply(
+            lambda x: any(x.startswith(kw) for kw in INTERNAL_COMPANIES) or x == "(BLANK)"
+        )
+    else:
+        df["_is_internal"] = False
+
+    # ── Derived: subject clean ──
+    src_subj = col_map.get("subject")
+    if src_subj:
+        df["_subject"] = df[src_subj].fillna("(blank)").astype(str).str.strip()
+    else:
+        df["_subject"] = "(no subject column)"
+
+    # ── Derived: origin clean ──
+    src_orig = col_map.get("origin")
+    if src_orig:
+        df["_origin"] = df[src_orig].fillna("(blank)").astype(str).str.strip()
+    else:
+        df["_origin"] = "(no origin column)"
+
+    # ── Derived: week / day-of-week / date ──
+    if "_created_on_dt" in df.columns:
+        valid = df["_created_on_dt"].notna()
+        df.loc[valid, "_week"] = df.loc[valid, "_created_on_dt"].dt.to_period("W").astype(str)
+        df.loc[valid, "_date"] = df.loc[valid, "_created_on_dt"].dt.date
+        df.loc[valid, "_dow"]  = df.loc[valid, "_created_on_dt"].dt.day_name()
+        df.loc[valid, "_hour"] = df.loc[valid, "_created_on_dt"].dt.hour
+
+    # ── Derived: age (hours since created, for unresolved) ──
+    if "_created_on_dt" in df.columns:
+        now = pd.Timestamp.now()
+        df["_age_hours"] = (now - df["_created_on_dt"]).dt.total_seconds() / 3600
+
+    # ── Derived: text lengths ──
+    for key in ["description", "activity_subj"]:
+        src = col_map.get(key)
+        if src:
+            df[f"_{key}_len"] = df[src].fillna("").astype(str).str.len()
+
+    df._col_map = col_map
+    return df
+
+
+# ═══════════════════════════════════════════════════════════
+#  SHEET BUILDERS — Cases
+# ═══════════════════════════════════════════════════════════
+
+def sheet_01_population_split(df):
+    """D01: Client vs internal case split with headline metrics."""
+    total = len(df)
+    client = df[~df["_is_internal"]]
+    internal = df[df["_is_internal"]]
+
+    def _stats(subset, label):
+        n = len(subset)
+        rows = [
+            {"section": label, "metric": "case_count", "value": f"{n:,}"},
+            {"section": label, "metric": "pct_of_total", "value": pct(n, total)},
+        ]
+        if "_hours" in subset.columns:
+            hrs = subset["_hours"].dropna()
+            if len(hrs):
+                rows.append({"section": label, "metric": "median_hours", "value": f"{hrs.median():.1f}"})
+                rows.append({"section": label, "metric": "p90_hours", "value": f"{hrs.quantile(.9):.1f}"})
+        if "_is_resolved" in subset.columns:
+            unres = (~subset["_is_resolved"]).sum()
+            rows.append({"section": label, "metric": "unresolved_count", "value": f"{unres:,}"})
+            rows.append({"section": label, "metric": "pct_unresolved", "value": pct(unres, n)})
+        # top 5 subjects
+        top_subj = subset["_subject"].value_counts().head(5)
+        for s, c in top_subj.items():
+            rows.append({"section": label, "metric": f"top_subject: {s}", "value": f"{c:,}"})
+        return rows
+
+    rows = _stats(df, "ALL CASES")
+    rows += _stats(client, "CLIENT ONLY")
+    rows += _stats(internal, "INTERNAL / SYSTEM")
+
+    # internal company breakdown
+    if "_company_clean" in internal.columns:
+        co_dist = internal["_company_clean"].value_counts().head(5)
+        for co, c in co_dist.items():
+            rows.append({"section": "INTERNAL BREAKDOWN", "metric": co, "value": f"{c:,}"})
+
+    return pd.DataFrame(rows)
+
+
+def sheet_02_client_weekly(df):
+    """D02: Weekly time-series for CLIENT cases only."""
+    client = df[~df["_is_internal"]].copy()
+    if "_week" not in client.columns or client["_week"].isna().all():
+        return pd.DataFrame({"note": ["No date data for weekly aggregation"]})
+
+    valid = client.dropna(subset=["_week"])
+    weekly = valid.groupby("_week").agg(
+        created=("_week", "size"),
+    ).reset_index()
+
+    # resolved per week
+    if "_resolved_on_dt" in client.columns:
+        res = client.dropna(subset=["_resolved_on_dt"]).copy()
+        res["_res_week"] = res["_resolved_on_dt"].dt.to_period("W").astype(str)
+        res_wk = res.groupby("_res_week").size().reset_index(name="resolved")
+        weekly = weekly.merge(res_wk, left_on="_week", right_on="_res_week", how="left").drop(columns=["_res_week"], errors="ignore")
+
+    weekly["resolved"] = weekly.get("resolved", pd.Series([0]*len(weekly))).fillna(0).astype(int)
+
+    # median hours
+    if "_hours" in client.columns:
+        hrs_wk = valid.groupby("_week")["_hours"].agg(
+            median_hrs="median", p90_hrs=lambda x: x.quantile(0.9) if len(x) else np.nan
+        ).reset_index()
+        hrs_wk["median_hrs"] = hrs_wk["median_hrs"].round(1)
+        hrs_wk["p90_hrs"] = hrs_wk["p90_hrs"].round(1)
+        weekly = weekly.merge(hrs_wk, on="_week", how="left")
+
+    # backlog
+    weekly["cum_created"]  = weekly["created"].cumsum()
+    weekly["cum_resolved"] = weekly["resolved"].cumsum()
+    weekly["backlog"]      = weekly["cum_created"] - weekly["cum_resolved"]
+
+    # pct unresolved created that week (snapshot)
+    if "_is_resolved" in client.columns:
+        unres_wk = valid[~valid["_is_resolved"]].groupby("_week").size().reset_index(name="still_open")
+        weekly = weekly.merge(unres_wk, on="_week", how="left")
+        weekly["still_open"] = weekly["still_open"].fillna(0).astype(int)
+
+    weekly.rename(columns={"_week": "week"}, inplace=True)
+    return weekly
+
+
+def sheet_03_subject_deep(df):
+    """D03: Top 15 subjects with full resolution profile — client only."""
+    client = df[~df["_is_internal"]].copy()
+    grp = client.groupby("_subject")
+
+    result = grp.size().reset_index(name="count")
+    result = result.sort_values("count", ascending=False).head(15)
+
+    if "_hours" in client.columns:
+        agg = grp["_hours"].agg(
+            median_hrs="median",
+            p75_hrs=lambda x: x.quantile(0.75),
+            p90_hrs=lambda x: x.quantile(0.90),
+            max_hrs="max",
+        ).reset_index()
+        for c in ["median_hrs", "p75_hrs", "p90_hrs", "max_hrs"]:
+            agg[c] = agg[c].round(1)
+        result = result.merge(agg, on="_subject", how="left")
+
+    if "_is_resolved" in client.columns:
+        unres = grp["_is_resolved"].agg(
+            unresolved=lambda x: (~x).sum(),
+            pct_unresolved=lambda x: f"{100*(~x).mean():.1f}%",
+        ).reset_index()
+        result = result.merge(unres, on="_subject", how="left")
+
+    # description fill rate by subject
+    if "_description_len" in client.columns:
+        desc_fill = grp["_description_len"].agg(
+            desc_fill_pct=lambda x: f"{100*(x>0).mean():.0f}%",
+            desc_median_len=lambda x: int(x[x>0].median()) if (x>0).any() else 0,
+        ).reset_index()
+        result = result.merge(desc_fill, on="_subject", how="left")
+
+    # activity subject fill rate
+    if "_activity_subj_len" in client.columns:
+        act_fill = grp["_activity_subj_len"].agg(
+            act_subj_fill_pct=lambda x: f"{100*(x>0).mean():.0f}%",
+        ).reset_index()
+        result = result.merge(act_fill, on="_subject", how="left")
+
+    result.rename(columns={"_subject": "subject"}, inplace=True)
+    return result.reset_index(drop=True)
+
+
+def sheet_04_day_of_week(df):
+    """D04: Day-of-week volume pattern — client only."""
+    client = df[(~df["_is_internal"]) & df.get("_dow", pd.Series(dtype=str)).notna()].copy()
+    if "_dow" not in client.columns:
+        return pd.DataFrame({"note": ["No day-of-week data"]})
+
+    dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    grp = client.groupby("_dow")
+    result = grp.size().reset_index(name="cases")
+    result["_sort"] = result["_dow"].map({d:i for i,d in enumerate(dow_order)})
+    result = result.sort_values("_sort").drop(columns=["_sort"])
+    result["pct"] = (result["cases"] / result["cases"].sum() * 100).round(1).astype(str) + "%"
+
+    if "_hours" in client.columns:
+        med = grp["_hours"].median().round(1).reset_index(name="median_hrs")
+        result = result.merge(med, on="_dow")
+
+    # count distinct weeks to compute avg per day
+    if "_week" in client.columns:
+        n_weeks = client["_week"].nunique()
+        result["avg_per_day"] = (result["cases"] / n_weeks).round(0).astype(int)
+
+    result.rename(columns={"_dow": "day"}, inplace=True)
+    return result
+
+
+def sheet_05_hourly_pattern(df):
+    """D05: Hourly creation pattern — client only."""
+    client = df[(~df["_is_internal"]) & df.get("_hour", pd.Series(dtype=float)).notna()].copy()
+    if "_hour" not in client.columns:
+        return pd.DataFrame({"note": ["No hour data"]})
+
+    grp = client.groupby("_hour")
+    result = grp.size().reset_index(name="cases")
+    result["pct"] = (result["cases"] / result["cases"].sum() * 100).round(1).astype(str) + "%"
+    result["_hour"] = result["_hour"].astype(int)
+    result.rename(columns={"_hour": "hour"}, inplace=True)
+    return result.sort_values("hour")
+
+
+def sheet_06_sla_breach(df):
+    """D06: SLA breach analysis by subject — client only.
+    Uses multiple thresholds since we don't know actual SLA targets."""
+    client = df[~df["_is_internal"]].copy()
+    if "_hours" not in client.columns:
+        return pd.DataFrame({"note": ["Resolved In Hours not available"]})
+
+    thresholds = [4, 8, 24, 48, 72, 168]  # hours
+    subjects = client["_subject"].value_counts().head(12).index.tolist()
+    rows = []
+
+    for subj in subjects:
+        sub = client[client["_subject"] == subj]
+        hrs = sub["_hours"].dropna()
+        n = len(hrs)
+        if n == 0:
+            continue
+        row = {"subject": subj, "cases_with_hours": n}
+        for t in thresholds:
+            breach = (hrs > t).sum()
+            row[f">{t}h_count"] = int(breach)
+            row[f">{t}h_pct"] = f"{100*breach/n:.1f}%"
+        rows.append(row)
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame({"note": ["No hours data"]})
+
+
+def sheet_07_backlog_detail(df):
+    """D07: Current unresolved cases — aging by subject and company."""
+    unres = df[(~df["_is_internal"]) & (~df["_is_resolved"])].copy()
+    if len(unres) == 0:
+        return pd.DataFrame({"note": ["No unresolved client cases"]})
+
+    parts = []
+
+    # Summary
+    summary = pd.DataFrame({"section": ["SUMMARY"], "metric": ["total_unresolved_client"],
+                            "value": [f"{len(unres):,}"]})
+    parts.append(summary)
+
+    # Aging buckets
+    if "_age_hours" in unres.columns:
+        bins = [0, 24, 72, 168, 336, 720, float("inf")]
+        labels = ["0-24h", "1-3d", "3-7d", "7-14d", "14-30d", "30d+"]
+        unres["_bucket"] = pd.cut(unres["_age_hours"], bins=bins, labels=labels, right=True)
+        aging = unres["_bucket"].value_counts().reindex(labels).fillna(0).astype(int).reset_index()
+        aging.columns = ["metric", "value"]
+        aging.insert(0, "section", "AGING BUCKETS")
+        parts.append(aging)
+
+    # By subject
+    subj_ct = unres["_subject"].value_counts().head(10).reset_index()
+    subj_ct.columns = ["metric", "value"]
+    subj_ct.insert(0, "section", "BY SUBJECT")
+    parts.append(subj_ct)
+
+    # By company
+    if "_company_clean" in unres.columns:
+        co_ct = unres["_company_clean"].value_counts().head(10).reset_index()
+        co_ct.columns = ["metric", "value"]
+        co_ct.insert(0, "section", "BY COMPANY")
+        parts.append(co_ct)
+
+    # Cross: top subjects x aging buckets
+    if "_bucket" in unres.columns:
+        top_subj = unres["_subject"].value_counts().head(6).index.tolist()
+        ct = pd.crosstab(
+            unres[unres["_subject"].isin(top_subj)]["_subject"],
+            unres[unres["_subject"].isin(top_subj)]["_bucket"],
+        )
+        ct = ct.reset_index().rename(columns={"_subject": "metric"})
+        ct.insert(0, "section", "SUBJECT x AGING")
+        parts.append(ct)
+
+    return pd.concat(parts, ignore_index=True, sort=False)
+
+
+def sheet_08_retouch(df):
+    """D08: Re-touch analysis — cases touched after resolution."""
+    if "_resolved_on_dt" not in df.columns or "_last_touch_dt" not in df.columns:
+        return pd.DataFrame({"note": ["Resolved On or Last Touch column not available"]})
+
+    client = df[(~df["_is_internal"]) & df["_is_resolved"]].copy()
+    client = client.dropna(subset=["_resolved_on_dt", "_last_touch_dt"])
+
+    if len(client) == 0:
+        return pd.DataFrame({"note": ["No resolved cases with last touch data"]})
+
+    # Cases where last touch is AFTER resolved on
+    client["_touch_gap_hrs"] = (
+        client["_last_touch_dt"] - client["_resolved_on_dt"]
+    ).dt.total_seconds() / 3600
+
+    retouched = client[client["_touch_gap_hrs"] > 1].copy()  # >1 hour after resolution
+
+    parts = []
+
+    total_resolved = len(client)
+    total_retouched = len(retouched)
+    parts.append(pd.DataFrame({
+        "section": ["SUMMARY", "SUMMARY", "SUMMARY"],
+        "metric": ["resolved_cases_with_touch_data", "retouched_after_resolve", "retouch_rate"],
+        "value": [f"{total_resolved:,}", f"{total_retouched:,}", pct(total_retouched, total_resolved)],
+    }))
+
+    if total_retouched > 0:
+        # Gap distribution
+        gaps = retouched["_touch_gap_hrs"]
+        dist = pd.DataFrame({
+            "section": ["GAP DISTRIBUTION"] * 5,
+            "metric": ["median_gap_hrs", "p75_gap_hrs", "p90_gap_hrs", "max_gap_hrs", "avg_gap_hrs"],
+            "value": [f"{gaps.median():.1f}", f"{gaps.quantile(.75):.1f}",
+                      f"{gaps.quantile(.9):.1f}", f"{gaps.max():.1f}", f"{gaps.mean():.1f}"],
+        })
+        parts.append(dist)
+
+        # By subject
+        by_subj = retouched["_subject"].value_counts().head(10).reset_index()
+        by_subj.columns = ["metric", "value"]
+        by_subj.insert(0, "section", "RETOUCHED BY SUBJECT")
+        parts.append(by_subj)
+
+    return pd.concat(parts, ignore_index=True, sort=False)
+
+
+def sheet_09_owner_workload(df):
+    """D09: Pod and owner workload — client only."""
+    client = df[~df["_is_internal"]].copy()
+    parts = []
+
+    # By pod
+    if "_pod" not in client.columns:
+        pod_col = df._col_map.get("pod")
+        if pod_col:
+            client["_pod"] = client[pod_col].fillna("(blank)").astype(str)
+
+    if "_pod" in client.columns or df._col_map.get("pod"):
+        pod_src = "_pod" if "_pod" in client.columns else df._col_map["pod"]
+        if pod_src not in client.columns:
+            client["_pod"] = client[df._col_map["pod"]].fillna("(blank)").astype(str)
+        grp = client.groupby("_pod")
+        pod_tbl = grp.size().reset_index(name="cases")
+        pod_tbl = pod_tbl.sort_values("cases", ascending=False).head(10)
+
+        if "_hours" in client.columns:
+            med = grp["_hours"].median().round(1).reset_index(name="median_hrs")
+            pod_tbl = pod_tbl.merge(med, on="_pod")
+
+        if "_is_resolved" in client.columns:
+            unres = grp["_is_resolved"].agg(unresolved=lambda x: (~x).sum()).reset_index()
+            pod_tbl = pod_tbl.merge(unres, on="_pod")
+
+        pod_tbl.rename(columns={"_pod": "metric"}, inplace=True)
+        pod_tbl.insert(0, "section", "BY POD")
+        parts.append(pod_tbl)
+
+    # By owner
+    owner_col = df._col_map.get("owner")
+    if owner_col:
+        client["_owner"] = client[owner_col].fillna("(blank)").astype(str)
+        grp = client.groupby("_owner")
+        own_tbl = grp.size().reset_index(name="cases")
+        own_tbl = own_tbl.sort_values("cases", ascending=False).head(15)
+
+        if "_hours" in client.columns:
+            med = grp["_hours"].median().round(1).reset_index(name="median_hrs")
+            own_tbl = own_tbl.merge(med, on="_owner")
+
+        if "_is_resolved" in client.columns:
+            unres = grp["_is_resolved"].agg(unresolved=lambda x: (~x).sum()).reset_index()
+            own_tbl = own_tbl.merge(unres, on="_owner")
+
+        own_tbl.rename(columns={"_owner": "metric"}, inplace=True)
+        own_tbl.insert(0, "section", "BY OWNER")
+        parts.append(own_tbl)
+
+    if not parts:
+        return pd.DataFrame({"note": ["No pod/owner columns found"]})
+    return pd.concat(parts, ignore_index=True, sort=False)
+
+
+def sheet_10_origin_subject_detail(df):
+    """D10: Origin x Subject matrix with median hours — client only."""
+    client = df[~df["_is_internal"]].copy()
+
+    top_origins = client["_origin"].value_counts().head(5).index.tolist()
+    top_subjects = client["_subject"].value_counts().head(8).index.tolist()
+
+    sub = client[client["_origin"].isin(top_origins) & client["_subject"].isin(top_subjects)]
+
+    # Count matrix
+    ct_count = pd.crosstab(sub["_origin"], sub["_subject"])
+
+    # Median hours matrix
+    if "_hours" in sub.columns:
+        ct_hours = sub.groupby(["_origin", "_subject"])["_hours"].median().round(1).unstack(fill_value=np.nan)
+    else:
+        ct_hours = pd.DataFrame()
+
+    parts = []
+    ct1 = ct_count.reset_index().rename(columns={"_origin": "origin"})
+    ct1.insert(0, "section", "CASE COUNT")
+    parts.append(ct1)
+
+    if not ct_hours.empty:
+        ct2 = ct_hours.reset_index().rename(columns={"_origin": "origin"})
+        ct2.insert(0, "section", "MEDIAN HOURS")
+        parts.append(ct2)
+
+    return pd.concat(parts, ignore_index=True, sort=False) if parts else pd.DataFrame({"note": ["No data"]})
+
+
+# ═══════════════════════════════════════════════════════════
+#  SHEET BUILDERS — Emails
+# ═══════════════════════════════════════════════════════════
+
+def prepare_emails(emails, cases_df):
+    """Enrich emails with case linkage and stripped text."""
+    df = emails.copy()
+
+    col_map = {
+        "subject":     find_col(df, "Subject"),
+        "description": find_col(df, "Description"),
+        "from":        find_col(df, "From"),
+        "to":          find_col(df, "To"),
+        "status":      find_col(df, "Status Reason"),
+        "created_on":  find_col(df, "Created On"),
+        "owner":       find_col(df, "Owner"),
+        "regarding":   find_col(df, "Regarding"),
+        "case_number": find_col(df, "Case Number (Regarding) (Case)"),
+        "case_subject": find_col(df, "Subject (Regarding) (Case)"),
+        "case_subj_path": find_col(df, "Subject Path (Regarding) (Case)"),
+        "priority":    find_col(df, "Priority"),
+    }
+
+    # Strip HTML from description
+    desc_col = col_map.get("description")
+    if desc_col:
+        log("  Stripping HTML from email descriptions (this may take a moment)...")
+        df["_body_text"] = df[desc_col].apply(strip_html)
+        df["_body_len"]  = df["_body_text"].str.len()
+        df["_html_len"]  = df[desc_col].fillna("").astype(str).str.len()
+
+    # Created datetime
+    src = col_map.get("created_on")
+    if src:
+        df["_created_dt"] = safe_dt(df[src])
+        df["_hour"] = df["_created_dt"].dt.hour
+
+    # Case linkage flag
+    case_col = col_map.get("case_number")
+    if case_col:
+        df["_has_case"] = df[case_col].notna()
+    else:
+        df["_has_case"] = False
+
+    # Link to case data for resolution hours
+    if case_col and not cases_df.empty:
+        case_num_col = find_col(cases_df, "Case Number")
+        case_subj_col = find_col(cases_df, "Subject")
+        case_hrs_col = find_col(cases_df, "Resolved In Hours")
+        if case_num_col:
+            case_lk = cases_df[[case_num_col]].copy()
+            if case_subj_col:
+                case_lk["_linked_case_subject"] = cases_df[case_subj_col]
+            if case_hrs_col:
+                case_lk["_linked_case_hours"] = safe_numeric(cases_df[case_hrs_col])
+            case_lk = case_lk.rename(columns={case_num_col: "_case_join_key"})
+            df["_case_join_key"] = df[case_col].astype(str)
+            case_lk["_case_join_key"] = case_lk["_case_join_key"].astype(str)
+            df = df.merge(case_lk.drop_duplicates(subset=["_case_join_key"]),
+                          on="_case_join_key", how="left")
+
+    df._col_map = col_map
+    return df
+
+
+def sheet_11_email_overview(edf):
+    """D11: Email overview stats."""
+    parts = []
+    n = len(edf)
+
+    # Headlines
+    rows = [
+        {"section": "TOTALS", "metric": "email_count", "value": f"{n:,}"},
+        {"section": "TOTALS", "metric": "linked_to_case", "value": f"{edf['_has_case'].sum():,} ({pct(edf['_has_case'].sum(), n)})"},
+    ]
+    if "_body_len" in edf.columns:
+        rows.append({"section": "TOTALS", "metric": "median_body_text_chars", "value": f"{int(edf['_body_len'].median()):,}"})
+        rows.append({"section": "TOTALS", "metric": "median_html_chars", "value": f"{int(edf['_html_len'].median()):,}"})
+        rows.append({"section": "TOTALS", "metric": "html_to_text_ratio", "value": f"{(edf['_html_len'] / edf['_body_len'].replace(0, 1)).median():.1f}x"})
+    parts.append(pd.DataFrame(rows))
+
+    # Status distribution
+    status_col = edf._col_map.get("status")
+    if status_col:
+        st = edf[status_col].fillna("(blank)").value_counts().reset_index()
+        st.columns = ["metric", "value"]
+        st.insert(0, "section", "STATUS REASON")
+        parts.append(st)
+
+    # Priority distribution
+    prio_col = edf._col_map.get("priority")
+    if prio_col:
+        pr = edf[prio_col].fillna("(blank)").value_counts().reset_index()
+        pr.columns = ["metric", "value"]
+        pr.insert(0, "section", "PRIORITY")
+        parts.append(pr)
+
+    # Hourly distribution
+    if "_hour" in edf.columns:
+        hrs = edf["_hour"].dropna().astype(int).value_counts().sort_index().reset_index()
+        hrs.columns = ["metric", "value"]
+        hrs["metric"] = hrs["metric"].astype(str) + ":00"
+        hrs.insert(0, "section", "HOUR OF DAY")
+        parts.append(hrs)
+
+    return pd.concat(parts, ignore_index=True, sort=False)
+
+
+def sheet_12_email_case_subject_mix(edf):
+    """D12: What case subjects generate the most email?"""
+    if "_linked_case_subject" not in edf.columns:
+        return pd.DataFrame({"note": ["Case subject linkage not available"]})
+
+    linked = edf[edf["_has_case"]].copy()
+    if len(linked) == 0:
+        return pd.DataFrame({"note": ["No linked emails"]})
+
+    grp = linked.groupby("_linked_case_subject")
+    result = grp.size().reset_index(name="email_count")
+    result = result.sort_values("email_count", ascending=False).head(15)
+
+    # Distinct cases per subject
+    case_col = edf._col_map.get("case_number")
+    if case_col:
+        distinct_cases = grp[case_col].nunique().reset_index(name="distinct_cases")
+        result = result.merge(distinct_cases, on="_linked_case_subject", how="left")
+        result["emails_per_case"] = (result["email_count"] / result["distinct_cases"]).round(1)
+
+    # median body length
+    if "_body_len" in linked.columns:
+        body_med = grp["_body_len"].median().round(0).astype(int).reset_index(name="median_body_chars")
+        result = result.merge(body_med, on="_linked_case_subject", how="left")
+
+    result.rename(columns={"_linked_case_subject": "case_subject"}, inplace=True)
+    return result.reset_index(drop=True)
+
+
+def sheet_13_email_burden_per_case(edf):
+    """D13: Email burden distribution — how many emails per case?"""
+    case_col = edf._col_map.get("case_number")
+    if not case_col:
+        return pd.DataFrame({"note": ["Case number column not found"]})
+
+    linked = edf[edf["_has_case"]].copy()
+    per_case = linked.groupby(case_col).size()
+
+    parts = []
+
+    # Distribution
+    dist = pd.DataFrame({
+        "metric": ["cases_with_emails", "min", "median", "p75", "p90", "p95", "max"],
+        "value": [
+            f"{len(per_case):,}",
+            int(per_case.min()), int(per_case.median()),
+            int(per_case.quantile(.75)), int(per_case.quantile(.9)),
+            int(per_case.quantile(.95)), int(per_case.max()),
+        ]
+    })
+    dist.insert(0, "section", "EMAILS PER CASE")
+    parts.append(dist)
+
+    # Bucket distribution
+    bins = [0, 1, 2, 3, 5, 10, float("inf")]
+    labels = ["1", "2", "3", "4-5", "6-10", "11+"]
+    buckets = pd.cut(per_case, bins=bins, labels=labels, right=True)
+    bkt = buckets.value_counts().reindex(labels).fillna(0).astype(int).reset_index()
+    bkt.columns = ["metric", "value"]
+    bkt.insert(0, "section", "BUCKET DISTRIBUTION")
+    parts.append(bkt)
+
+    # Top 10 highest-email cases
+    top = per_case.nlargest(10).reset_index()
+    top.columns = ["metric", "value"]
+    top.insert(0, "section", "HIGHEST EMAIL CASES")
+    parts.append(top)
+
+    return pd.concat(parts, ignore_index=True, sort=False)
+
+
+def sheet_14_email_text_samples(edf):
+    """D14: Stratified email text samples with HTML stripped."""
+    rows = []
+    subj_col = edf._col_map.get("subject")
+    case_subj_col = "_linked_case_subject" if "_linked_case_subject" in edf.columns else None
+
+    # 5 linked, 5 unlinked
+    for label, pool in [("linked", edf[edf["_has_case"]]), ("unlinked", edf[~edf["_has_case"]])]:
+        sample = pool.head(5) if len(pool) >= 5 else pool
+        for _, r in sample.iterrows():
+            row = {
+                "type": label,
+                "email_subject": trunc(r.get(subj_col, ""), 100) if subj_col else "",
+                "case_subject": trunc(r.get(case_subj_col, ""), 60) if case_subj_col and pd.notna(r.get(case_subj_col)) else "",
+                "body_stripped": trunc(r.get("_body_text", ""), TRUNC),
+                "body_chars": int(r.get("_body_len", 0)) if pd.notna(r.get("_body_len")) else 0,
+            }
+            rows.append(row)
+
+    # 5 longest-body emails
+    if "_body_len" in edf.columns:
+        longest = edf.nlargest(5, "_body_len")
+        for _, r in longest.iterrows():
+            row = {
+                "type": "longest_body",
+                "email_subject": trunc(r.get(subj_col, ""), 100) if subj_col else "",
+                "case_subject": trunc(r.get(case_subj_col, ""), 60) if case_subj_col and pd.notna(r.get(case_subj_col)) else "",
+                "body_stripped": trunc(r.get("_body_text", ""), TRUNC),
+                "body_chars": int(r.get("_body_len", 0)),
+            }
+            rows.append(row)
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame({"note": ["No samples"]})
+
+
+def sheet_15_genai_evidence(df, edf):
+    """D15: Compact GenAI use-case evidence summary."""
+    client = df[~df["_is_internal"]].copy()
+    rows = []
+
+    def _add(uc, metric, value, signal):
+        rows.append({"use_case": uc, "metric": metric, "value": value, "signal": signal})
+
+    n_client = len(client)
+
+    # ── Triage / routing ──
+    n_origins = client["_origin"].nunique()
+    n_subjects = client["_subject"].nunique()
+    email_origin_pct = pct((client["_origin"] == "Email").sum(), n_client)
+    _add("Triage/Routing", "distinct_origins", n_origins, "Low variety → simple rules may suffice")
+    _add("Triage/Routing", "distinct_subjects", n_subjects, "Moderate variety → subject-based routing feasible")
+    _add("Triage/Routing", "email_origin_pct", email_origin_pct, "Dominant channel = email inflow")
+    # Top 3 subjects account for what %
+    top3 = client["_subject"].value_counts().head(3).sum()
+    _add("Triage/Routing", "top_3_subjects_pct", pct(top3, n_client), "High concentration → top subjects are targetable")
+
+    # ── Summarization ──
+    if "_body_len" in edf.columns:
+        med_body = int(edf["_body_len"].median())
+        _add("Summarization", "email_body_median_chars", f"{med_body:,}", "Long bodies → summarization valuable" if med_body > 500 else "Short bodies → limited value")
+        pct_long = pct((edf["_body_len"] > 500).sum(), len(edf))
+        _add("Summarization", "emails_over_500_chars", pct_long, "Pool of summarizable emails")
+
+    if "_description_len" in client.columns:
+        fill = pct((client["_description_len"] > 0).sum(), n_client)
+        _add("Summarization", "case_description_fill", fill, ">70% = good summarization pool" if (client["_description_len"] > 0).mean() > 0.7 else "<70% = thin pool")
+
+    if "_activity_subj_len" in client.columns:
+        fill = pct((client["_activity_subj_len"] > 0).sum(), n_client)
+        _add("Summarization", "activity_subject_fill", fill, "Best text field in cases")
+
+    # ── Missing-info detection ──
+    if "_description_len" in client.columns:
+        empty_desc_unres = client[(client["_description_len"] == 0) & (~client["_is_resolved"])]
+        _add("Missing-Info", "unresolved_no_description", f"{len(empty_desc_unres):,}", "Flaggable cases")
+    if "_company_clean" in client.columns:
+        blank_co = (client["_company_clean"] == "(blank)").sum()
+        _add("Missing-Info", "blank_company_name", f"{blank_co:,}", "Missing entity linkage")
+
+    # ── Escalation signals ──
+    if "_hours" in client.columns:
+        p90 = client["_hours"].dropna().quantile(0.9)
+        n_breach = (client["_hours"] > p90).sum()
+        _add("Escalation", "global_p90_hours", f"{p90:.1f}", "Threshold for anomaly detection")
+        _add("Escalation", "cases_above_p90", f"{n_breach:,}", "Candidate escalation pool")
+    unres = (~client["_is_resolved"]).sum()
+    _add("Escalation", "current_unresolved", f"{unres:,}", "Active backlog")
+
+    # ── Draft reply ──
+    if "_body_len" in edf.columns:
+        linked = edf[edf["_has_case"]]
+        _add("Draft Reply", "linked_emails_with_body", f"{len(linked):,}", "Pool for reply generation")
+        if "_linked_case_subject" in linked.columns:
+            top_subj = linked["_linked_case_subject"].value_counts().head(3)
+            for s, c in top_subj.items():
+                _add("Draft Reply", f"top_linked_subject: {s}", f"{c:,}", "Repetitive = templatable")
+
+    # ── Workflow copilot ──
+    if "_hours" in client.columns:
+        top_slow = client.groupby("_subject")["_hours"].median().nlargest(5)
+        for s, h in top_slow.items():
+            _add("Workflow Copilot", f"slowest_subject: {s}", f"{h:.1f}h median", "Process friction → copilot opportunity")
+
+    return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════
+#  MAIN
+# ═══════════════════════════════════════════════════════════
+
+def main():
+    start = datetime.datetime.now()
+    log(f"WAB Cases + Emails Deep Dive — {start.strftime('%Y-%m-%d %H:%M:%S')}")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    cases_raw  = read_file(CASE_FILE, "Cases")
+    emails_raw = read_file(EMAIL_FILE, "Emails")
+
+    if cases_raw.empty:
+        log("FATAL: Cases file not loaded. Exiting.")
+        return
+
+    log("\n--- Preparing Cases ---")
+    cases = prepare_cases(cases_raw)
+    log(f"  Client cases: {(~cases['_is_internal']).sum():,}  |  Internal: {cases['_is_internal'].sum():,}")
+
+    log("\n--- Preparing Emails ---")
+    edf = prepare_emails(emails_raw, cases_raw) if not emails_raw.empty else pd.DataFrame()
+
+    log("\n--- Building sheets ---")
+    sheets = OrderedDict()
+
+    log("  D01 Population Split")
+    sheets["D01_PopulationSplit"] = sheet_01_population_split(cases)
+
+    log("  D02 Client Weekly")
+    sheets["D02_ClientWeekly"] = sheet_02_client_weekly(cases)
+
+    log("  D03 Subject Deep")
+    sheets["D03_SubjectDeep"] = sheet_03_subject_deep(cases)
+
+    log("  D04 Day of Week")
+    sheets["D04_DayOfWeek"] = sheet_04_day_of_week(cases)
+
+    log("  D05 Hourly Pattern")
+    sheets["D05_HourlyPattern"] = sheet_05_hourly_pattern(cases)
+
+    log("  D06 SLA Breach")
+    sheets["D06_SLA_Breach"] = sheet_06_sla_breach(cases)
+
+    log("  D07 Backlog Detail")
+    sheets["D07_BacklogDetail"] = sheet_07_backlog_detail(cases)
+
+    log("  D08 Retouch Analysis")
+    sheets["D08_Retouch"] = sheet_08_retouch(cases)
+
+    log("  D09 Owner Workload")
+    sheets["D09_OwnerWorkload"] = sheet_09_owner_workload(cases)
+
+    log("  D10 Origin x Subject Detail")
+    sheets["D10_OriginXSubject"] = sheet_10_origin_subject_detail(cases)
+
+    if not edf.empty:
+        log("  D11 Email Overview")
+        sheets["D11_EmailOverview"] = sheet_11_email_overview(edf)
+
+        log("  D12 Email-Case Subject Mix")
+        sheets["D12_EmailCaseSubjects"] = sheet_12_email_case_subject_mix(edf)
+
+        log("  D13 Email Burden Per Case")
+        sheets["D13_EmailBurden"] = sheet_13_email_burden_per_case(edf)
+
+        log("  D14 Email Text Samples")
+        sheets["D14_EmailTextSamples"] = sheet_14_email_text_samples(edf)
+    else:
+        log("  (Emails not loaded — skipping D11-D14)")
+
+    log("  D15 GenAI Evidence")
+    sheets["D15_GenAI_Evidence"] = sheet_15_genai_evidence(cases, edf if not edf.empty else pd.DataFrame())
+
+    # ── Write Excel ──
+    log(f"\nWriting: {OUTPUT_XLSX}")
+    with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
+        for name, sdf in sheets.items():
+            if sdf is not None:
+                write_sheet(writer, name[:31], sdf)
+    log("  Done.")
+
+    # ── Write markdown ──
+    log(f"Writing: {OUTPUT_MD}")
+    md = [
+        "# WAB Cases + Emails Deep Dive",
+        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n",
+        "## Files",
+        f"- Cases: {len(cases_raw):,} rows",
+        f"- Emails: {len(emails_raw):,} rows",
+        f"- Client cases: {(~cases['_is_internal']).sum():,}",
+        f"- Internal cases: {cases['_is_internal'].sum():,}",
+    ]
+    if WARN:
+        md.append("\n## Warnings")
+        for w in WARN: md.append(f"- {w}")
+    md.append("\n## Sheets")
+    for name, sdf in sheets.items():
+        md.append(f"- **{name}**: {len(sdf) if sdf is not None else 0} rows")
+    md.append("\n## Log\n```")
+    md.extend(LOG)
+    md.append("```")
+
+    with open(OUTPUT_MD, "w", encoding="utf-8") as f:
+        f.write("\n".join(md))
+
+    elapsed = (datetime.datetime.now() - start).total_seconds()
+    log(f"\nCompleted in {elapsed:.1f}s")
+
+
+if __name__ == "__main__":
+    main()
