@@ -1,5 +1,6 @@
+# -*- coding: utf-8 -*-
 """
-WAB HOA Operations — Data-Driven GenAI Opportunity Assessment
+WAB HOA Operations - Data-Driven GenAI Opportunity Assessment
 ==============================================================
 Standalone script that reads the three generated analysis workbooks
 and builds a single-page HTML story for internal + leadership discussion.
@@ -18,22 +19,22 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-# ┌─────────────────────────────────────────────────────────┐
-# │  EDIT THESE PATHS BEFORE RUNNING                        │
-# └─────────────────────────────────────────────────────────┘
+# ---------------------------------------------------------------------
+#  EDIT THESE PATHS BEFORE RUNNING
+# ---------------------------------------------------------------------
 INTERNAL_EXTRACT_XLSX = r"C:\Users\YourName\Desktop\wab_output\wab_internal_extract.xlsx"
 CASES_DEEP_DIVE_XLSX  = r"C:\Users\YourName\Desktop\wab_output\wab_cases_deep_dive.xlsx"
 ENTITY_DEEP_DIVE_XLSX = r"C:\Users\YourName\Desktop\wab_output\wab_entity_deep_dive.xlsx"
 USECASE_XLSX          = r"C:\Users\YourName\Desktop\WAB_Ops_UseCases_2026-03-18.xlsx"  # optional
 OUTPUT_DIR            = r"C:\Users\YourName\Desktop\wab_html_story"
 
-SITE_TITLE = "WAB HOA Operations — GenAI Opportunity Assessment"
-RUN_LABEL  = "Phase 1 · Internal Discussion Draft · Data as of March 2026"
+SITE_TITLE = "WAB HOA Operations - GenAI Opportunity Assessment"
+RUN_LABEL  = "Phase 1 | Internal Discussion Draft | Data as of March 2026"
 
 
-# ═══════════════════════════════════════════════════════════
-#  UTILITIES  (kept from prior version — these are solid)
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
+#  UTILITIES  (kept from prior version - these are solid)
+# ---------------------------------------------------------------------
 
 def ensure_dir(p):
     Path(p).mkdir(parents=True, exist_ok=True)
@@ -117,9 +118,9 @@ class Ctx:
         self.outdir   = ensure_dir(OUTPUT_DIR)
 
 
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 #  HTML BUILDING BLOCKS
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 
 def h(tag, text, cls="", **attrs):
     a = f' class="{cls}"' if cls else ""
@@ -128,7 +129,7 @@ def h(tag, text, cls="", **attrs):
     return f"<{tag}{a}>{text}</{tag}>"
 
 def p(text):
-    """Paragraph. Accepts raw HTML — caller is responsible for escaping user data."""
+    """Paragraph. Accepts raw HTML - caller is responsible for escaping user data."""
     return f"<p>{text}</p>"
 
 def prose(*paragraphs):
@@ -136,8 +137,9 @@ def prose(*paragraphs):
     return "".join(f"<p>{t}</p>" for t in paragraphs if t)
 
 def metric_card(label, value, note=""):
+    display = fmt(value) if value is not None else "N/A"
     n = f'<div class="mn">{esc(note)}</div>' if note else ""
-    return f'<div class="mc"><div class="ml">{esc(label)}</div><div class="mv">{esc(fmt(value))}</div>{n}</div>'
+    return f'<div class="mc"><div class="ml">{esc(label)}</div><div class="mv">{esc(display)}</div>{n}</div>'
 
 def metric_grid(cards):
     return '<div class="mg">' + "".join(cards) + "</div>"
@@ -173,9 +175,9 @@ def bullets(items):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items if x) + "</ul>"
 
 
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 #  SECTION RENDERERS
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 
 def render_executive(ctx):
     e11  = ctx.entity.get("E11_StoryNumbers")
@@ -185,7 +187,7 @@ def render_executive(ctx):
     cards = []
     if not e11.empty:
         cards = [
-            metric_card("Client Cases (3 months)", story_lookup(e11, "Cases (3mo)", "client_cases"), "Dec 2025 – Mar 2026"),
+            metric_card("Client Cases (3 months)", story_lookup(e11, "Cases (3mo)", "client_cases"), "Dec 2025 - Mar 2026"),
             metric_card("Currently Unresolved", story_lookup(e11, "Cases (3mo)", "client_unresolved"), "5% of client cases"),
             metric_card("Net Backlog Growth", "~130 / week", "Accelerating in recent weeks"),
             metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "Across 1,658 PMCs"),
@@ -667,8 +669,9 @@ def render_geo_rm_platform(ctx):
         "should land first and whether a single solution pattern can work across the portfolio.",
 
         "The top three states by PMC count — California (306), Florida (189), and Texas (159) — also lead in "
-        "deposits and case volume. These are the same states that rank Tier 1 in external market analysis, "
-        "confirming that WAB's internal operational burden aligns with where the HOA market is largest.",
+        "deposits and case volume. These three states alone account for a significant share of the operational "
+        "footprint, which means any AI pilot deployed in CA, FL, or TX would cover the largest concentration of "
+        "PMCs, deposits, and cases simultaneously.",
 
         "Platform mix reveals an important heterogeneity. Vantaca is the dominant accounting platform (239 PMCs, "
         "$4.1B deposits, 10,643 cases), followed by VMS (120 PMCs, $1.6B, 3,716 cases) and Caliber (137 PMCs, "
@@ -677,8 +680,8 @@ def render_geo_rm_platform(ctx):
 
         "Pod geography confirms that service teams are regionally aligned. WEST01 and WEST02 serve Arizona and "
         "California respectively; EAST03 covers Florida; Central01 spans Michigan, Ohio, and Texas. The pods "
-        "with the widest geographic spread also tend to have the slowest median resolution times — suggesting "
-        "that geographic dispersion may contribute to context-switching overhead.",
+        "with wider geographic spread appear in some cases to have longer median resolution times, though "
+        "this pattern may also reflect case-mix or staffing differences rather than geography alone.",
     )
 
     parts = [narrative]
@@ -758,10 +761,12 @@ def render_usecase_map(ctx):
                 "emails for the top 3–5 subjects could generate first-pass responses. The constraint is that we only "
                 "have one day of email data to assess template coverage.", "warn") +
         callout("Workflow Copilot — MEDIUM, subject-specific",
-                "The five slowest case subjects have median resolution times exceeding 1,000 hours — these are "
-                "effectively projects, not cases. A copilot for the high-volume subjects (Research, New Account Request, "
-                "Account Maintenance) that provides step-by-step guidance based on historical resolution patterns "
-                "is more practical than attempting to accelerate the structurally slow subjects.", "warn")
+                "Among the top-15 subjects by volume, Signature Card (155h median), CD Maintenance (98h), and "
+                "IntraFi Maintenance (91h) are structurally slow. A handful of low-volume niche subjects (ePay, "
+                "In House ACH migrations) have even longer medians exceeding 1,000 hours, but their case counts are "
+                "too small to justify dedicated AI investment. A copilot for the high-volume subjects (Research, "
+                "New Account Request, Account Maintenance) that provides step-by-step guidance based on historical "
+                "resolution patterns is more practical than attempting to accelerate structurally slow workflows.", "warn")
     )
 
     parts = [narrative, evidence_prose]
@@ -863,9 +868,9 @@ def render_caveats(ctx):
     )
 
 
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 #  SECTION REGISTRY & PAGE ASSEMBLY
-# ═══════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------
 
 SECTIONS = [
     ("exec_summary",     "Executive Summary",                     render_executive),
