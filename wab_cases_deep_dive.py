@@ -898,6 +898,117 @@ def sheet_15_genai_evidence(df, edf):
     return pd.DataFrame(rows)
 
 
+def sheet_16_triage_delay(df):
+    """D16: Email-to-case triage delay — gap between SLA Start and Created On.
+
+    SLA Start = when the originating email was received.
+    Created On = when the banker created the case.
+    The gap measures how long the email sat before a human acted on it.
+    Only meaningful for email-originated, client cases where SLA Start != Created On.
+    """
+    client = df[~df["_is_internal"]].copy()
+
+    if "_sla_start_dt" not in client.columns or "_created_on_dt" not in client.columns:
+        return pd.DataFrame({"note": ["SLA Start or Created On column not available"]})
+
+    # Only email-originated cases where SLA Start < Created On (email arrived before case created)
+    valid = client.dropna(subset=["_sla_start_dt", "_created_on_dt"]).copy()
+    valid["_triage_minutes"] = (
+        valid["_created_on_dt"] - valid["_sla_start_dt"]
+    ).dt.total_seconds() / 60
+
+    # Filter: only positive gaps (email arrived before case) and reasonable range (< 7 days)
+    # Negative or zero gaps mean SLA Start = Created On (non-email case or auto-created)
+    email_triage = valid[(valid["_triage_minutes"] > 0.5) & (valid["_triage_minutes"] < 10080)].copy()
+
+    # Also track zero-gap cases (auto-created or non-email)
+    zero_gap = valid[valid["_triage_minutes"] <= 0.5]
+
+    parts = []
+
+    # Summary
+    total_valid = len(valid)
+    n_with_gap = len(email_triage)
+    n_zero = len(zero_gap)
+
+    summary_rows = [
+        {"section": "SUMMARY", "metric": "client_cases_with_both_timestamps", "value": f"{total_valid:,}"},
+        {"section": "SUMMARY", "metric": "cases_with_triage_gap_>30sec", "value": f"{n_with_gap:,}"},
+        {"section": "SUMMARY", "metric": "cases_with_zero_or_negative_gap", "value": f"{n_zero:,} (auto-created or non-email)"},
+        {"section": "SUMMARY", "metric": "pct_with_triage_gap", "value": pct(n_with_gap, total_valid)},
+    ]
+
+    if n_with_gap > 0:
+        mins = email_triage["_triage_minutes"]
+        summary_rows.extend([
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "min", "value": f"{mins.min():.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "p25", "value": f"{mins.quantile(0.25):.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "median", "value": f"{mins.median():.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "p75", "value": f"{mins.quantile(0.75):.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "p90", "value": f"{mins.quantile(0.90):.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "p95", "value": f"{mins.quantile(0.95):.1f}"},
+            {"section": "GAP DISTRIBUTION (minutes)", "metric": "max", "value": f"{mins.max():.1f}"},
+        ])
+
+        # Convert to hours for the bucket view
+        hours = mins / 60
+        bins = [0, 0.083, 0.25, 0.5, 1, 2, 4, 8, 24, float("inf")]
+        labels = ["<5min", "5-15min", "15-30min", "30min-1h", "1-2h", "2-4h", "4-8h", "8-24h", "24h+"]
+        buckets = pd.cut(hours, bins=bins, labels=labels, right=True)
+        bkt = buckets.value_counts().reindex(labels).fillna(0).astype(int).reset_index()
+        bkt.columns = ["metric", "value"]
+        bkt.insert(0, "section", "TIME BUCKETS")
+        parts.append(pd.DataFrame(summary_rows))
+        parts.append(bkt)
+
+        # By subject (top 10)
+        email_triage["_subj"] = email_triage.get("_subject", "unknown")
+        by_subj = email_triage.groupby("_subj")["_triage_minutes"].agg(
+            cases="size",
+            median_minutes="median",
+            p90_minutes=lambda x: x.quantile(0.9),
+        ).reset_index().sort_values("cases", ascending=False).head(10)
+        by_subj["median_minutes"] = by_subj["median_minutes"].round(1)
+        by_subj["p90_minutes"] = by_subj["p90_minutes"].round(1)
+        by_subj.rename(columns={"_subj": "metric"}, inplace=True)
+        by_subj.insert(0, "section", "BY SUBJECT")
+        parts.append(by_subj)
+
+        # By pod (top 8)
+        pod_col = df._col_map.get("pod")
+        if pod_col and pod_col in email_triage.columns:
+            email_triage["_pod"] = email_triage[pod_col].fillna("(blank)").astype(str)
+        elif "_pod" not in email_triage.columns:
+            email_triage["_pod"] = "(no pod column)"
+        by_pod = email_triage.groupby("_pod")["_triage_minutes"].agg(
+            cases="size",
+            median_minutes="median",
+            p90_minutes=lambda x: x.quantile(0.9),
+        ).reset_index().sort_values("cases", ascending=False).head(8)
+        by_pod["median_minutes"] = by_pod["median_minutes"].round(1)
+        by_pod["p90_minutes"] = by_pod["p90_minutes"].round(1)
+        by_pod.rename(columns={"_pod": "metric"}, inplace=True)
+        by_pod.insert(0, "section", "BY POD")
+        parts.append(by_pod)
+
+        # By hour of day (when does triage take longest?)
+        if "_hour" in email_triage.columns:
+            by_hour = email_triage.groupby("_hour")["_triage_minutes"].agg(
+                cases="size",
+                median_minutes="median",
+            ).reset_index().sort_index()
+            by_hour["median_minutes"] = by_hour["median_minutes"].round(1)
+            by_hour["_hour"] = by_hour["_hour"].astype(int).astype(str) + ":00"
+            by_hour.rename(columns={"_hour": "metric"}, inplace=True)
+            by_hour.insert(0, "section", "BY HOUR OF DAY")
+            parts.append(by_hour)
+
+    else:
+        parts.append(pd.DataFrame(summary_rows))
+
+    return pd.concat(parts, ignore_index=True, sort=False) if parts else pd.DataFrame(summary_rows)
+
+
 # ═══════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════
@@ -971,6 +1082,9 @@ def main():
 
     log("  D15 GenAI Evidence")
     sheets["D15_GenAI_Evidence"] = sheet_15_genai_evidence(cases, edf if not edf.empty else pd.DataFrame())
+
+    log("  D16 Triage Delay")
+    sheets["D16_TriageDelay"] = sheet_16_triage_delay(cases)
 
     # ── Write Excel ──
     log(f"\nWriting: {OUTPUT_XLSX}")
