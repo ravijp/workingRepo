@@ -366,6 +366,7 @@ def render_workload(ctx):
     d09 = ctx.cases.get("D09_OwnerWorkload")
     d10 = ctx.cases.get("D10_OriginXSubject")
     d08 = ctx.cases.get("D08_Retouch")
+    d16 = ctx.cases.get("D16_TriageDelay")
 
     narrative = prose(
         "Understanding when and how work arrives is essential for deciding where to deploy AI assistance.",
@@ -424,10 +425,34 @@ def render_workload(ctx):
             table(d09, max_rows=25)
         ))
 
+    if not d16.empty:
+        parts.append(sub_section("Email-to-Case Triage Delay",
+            prose(
+                "One of the most actionable metrics in this analysis comes from a simple timestamp comparison. "
+                "The SLA Start field records when the originating email was received by the system. The Created On "
+                "field records when the banker created the case. The gap between these two timestamps is the "
+                "triage delay -- the time an email sits in the queue before a human reads it, decides it should "
+                "become a case, and creates that case.",
+
+                "This delay is directly measurable for every email-originated case in the dataset. Cases where "
+                "SLA Start equals Created On were either auto-created or originated from a non-email channel; "
+                "those are separated out. The remaining cases show how long the manual triage process actually takes.",
+
+                "This is the baseline metric for any AI triage system. If the median delay is significant, it "
+                "quantifies the time savings an AI classifier could deliver by automatically reading the email, "
+                "determining whether it should become a case, and creating it -- reducing the gap toward zero.",
+            ) +
+            table(d16, max_rows=30,
+                  note="'triage_minutes' = gap between SLA Start (email received) and Created On (case created). "
+                       "Cases with zero or negative gap are auto-created or non-email and excluded from the distribution. "
+                       "The BY SUBJECT and BY POD sections show where triage delays are longest.")
+        ))
+
     parts.append(so_what(
         "This is a weekday, morning-heavy, single-channel (email) operation. AI triage deployed in the "
-        "7:00–12:00 window covers 70%+ of inflow. The 10× pod variance suggests best-practice patterns "
-        "exist to learn from. The near-zero retouch rate confirms the problem is speed, not quality."
+        "7:00-12:00 window covers 70%+ of inflow. The 10x pod variance suggests best-practice patterns "
+        "exist to learn from. The near-zero retouch rate confirms the problem is speed, not quality. "
+        "The triage delay metric provides the direct baseline for measuring AI triage impact."
     ))
 
     return "".join(parts)
