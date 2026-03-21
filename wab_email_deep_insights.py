@@ -411,7 +411,8 @@ def prepare_emails(emails, cases):
 
     df["_case_subject"] = df.get("_subject", pd.Series("(blank)")).fillna(df["_case_subject_raw"]).fillna("(blank)")
     df["_company"] = df.get("_company", pd.Series("(blank)")).fillna("(blank)").astype(str)
-    df["_is_internal"] = df.get("_is_internal", pd.Series(False)).fillna(False)
+    df["_is_internal"] = df.get("_is_internal", pd.Series(False)).fillna(False).astype(bool)
+    df["_is_resolved"] = df.get("_is_resolved", pd.Series(True)).fillna(True).astype(bool)
     df["_is_client"] = df["_has_case"] & (~df["_is_internal"])
     df["_is_inbound"] = df["_direction"] == "Inbound"
     df["_is_outbound"] = df["_direction"] == "Outbound"
@@ -784,7 +785,7 @@ def sheet_07_signal_by_subject(edf):
         urgency=("_has_urgency_cue", "sum"),
         median_new_chars=("_new_len", "median"),
         median_case_hours=("_hours", "median"),
-        pct_unresolved=("_is_resolved", lambda s: f"{100 * (~s).mean():.1f}%"),
+        pct_unresolved=("_is_resolved", lambda s: f"{100 * (~s.astype(bool)).mean():.1f}%"),
     ).reset_index().sort_values("total_inbound", ascending=False).head(12)
 
     by_subj["missing_info_pct"] = (100 * by_subj["missing_info"] / by_subj["total_inbound"]).round(1).astype(str) + "%"
