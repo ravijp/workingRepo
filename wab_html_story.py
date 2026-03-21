@@ -190,7 +190,7 @@ def render_executive(ctx):
             metric_card("Client Cases (3 months)", story_lookup(e11, "Cases (3mo)", "client_cases"), "Dec 2025 - Mar 2026"),
             metric_card("Currently Unresolved", story_lookup(e11, "Cases (3mo)", "client_unresolved"), "5% of client cases"),
             metric_card("Net Backlog Growth", "~130 / week", "Accelerating in recent weeks"),
-            metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "Across 1,658 PMCs"),
+            metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "1,658 PMCs; includes one $11.7B blank entity"),
             metric_card("Deposit Concentration", "Top 5 = 56%", "Top 50 PMCs hold 77%"),
             metric_card("Emails Analyzed (1 day)", story_lookup(e11, "Emails (1day)", "total_emails"), "100% linked to cases"),
         ]
@@ -290,8 +290,12 @@ def render_subject_friction(ctx):
 
     narrative = prose(
         "Not all case types behave the same way, and this distinction matters for deciding where AI intervention "
-        "would have the highest return. When we break the 36,296 client cases down by subject — the operational "
-        "category assigned to each case — three distinct tiers emerge.",
+        "would have the highest return. When we break the 36,296 client cases down by subject -- the operational "
+        "category assigned to each case -- three distinct tiers emerge. Stakeholder confirmation: the Subject field "
+        "is selected by the banker from a curated pick list at case creation time. The 214 distinct values represent "
+        "a managed operational taxonomy, not freeform text. This is valuable for supervised classification -- a model "
+        "can learn from human-assigned labels -- but it also means some noise exists when bankers select the "
+        "closest-available match rather than an exact fit.",
 
         "The first tier is fast and clean. NSF and Non-Post cases, for example, resolve in a median of 1.5 hours "
         "with virtually no unresolved tail (0.2%). Fraud Alert and Transfer follow a similar pattern. These "
@@ -441,10 +445,19 @@ def render_data_quality(ctx):
 
         "The most important question is whether the four files can be connected into a single analytical graph. "
         "The answer is yes, with one dead-end path. HOAs link to PMCs at 94% match rate. Emails link to Cases at 99%. "
-        "Cases link to PMCs at 83% — and that rises to roughly 93% when internal/system cases (which have no "
-        "company name) are excluded. The one weak link is Cases to HOAs directly, at just 8%. This means the "
-        "operational unit of analysis should be the PMC (the management company), not the individual HOA. "
-        "To reach HOA-level detail, the path goes Case → PMC → HOA, not Case → HOA.",
+        "Cases link to PMCs at 83% -- and that rises to roughly 93% when internal/system cases (which have no "
+        "company name) are excluded. The one weak link is Cases to HOAs directly, at just 8%. Stakeholder "
+        "confirmation explains why: cases are always tracked against the management company (PMC), not individual "
+        "HOAs. This is by operating policy, not a data quality defect. The operational unit of analysis is the PMC. "
+        "To reach HOA-level detail, the path goes Case to PMC to HOA, not Case to HOA directly.",
+
+        "Two additional field definitions were confirmed in stakeholder discussions. The SLA Start timestamp "
+        "records when the originating email was received by the system. The Created On timestamp records when "
+        "the banker created the case. The gap between these two values represents the email-to-case conversion "
+        "delay -- the time spent reading, deciding, and creating a case from an inbound email. This delay is a "
+        "directly measurable triage opportunity for GenAI: any reduction in that gap accelerates case creation. "
+        "Additionally, some HOAs are known to be orphaned (not linked to any PMC). The approximately 6% "
+        "HOA-to-PMC join gap is a recognized data quality issue, not a systemic linkage failure.",
 
         "On the text side, the picture is mixed. Case Description fields are only 50% populated, with a median "
         "length of 28 characters when present — quite short. Activity Subject is stronger at 75% fill rate and "
@@ -496,6 +509,48 @@ def render_data_quality(ctx):
     return "".join(parts)
 
 
+def _build_quadrant_summary(e03):
+    """Compute a 4-row quadrant summary from the E03 friction-value table."""
+    qcol = find_col(e03, "quadrant")
+    dep_col = find_col(e03, "deposits_fmt", "deposits")
+    case_col = find_col(e03, "case_count")
+    if not qcol:
+        return pd.DataFrame()
+
+    # Try to parse deposit values back to numeric for summing
+    dep_numeric = None
+    if dep_col:
+        raw = e03[dep_col].astype(str).str.replace(r"[,$]", "", regex=True).str.replace("B","e9").str.replace("M","e6").str.replace("K","e3")
+        dep_numeric = pd.to_numeric(raw, errors="coerce")
+
+    rows = []
+    quad_order = [
+        ("High Value / Low Friction",  "Protect these. Well-served, high-value relationships."),
+        ("High Value / High Friction", "Priority AI targets. Operational investment justified by economic exposure."),
+        ("Low Value / Low Friction",   "Steady state. Monitor but do not over-invest."),
+        ("Low Value / High Friction",  "Review relationship economics. Disproportionate cost to serve."),
+    ]
+    for q_name, q_interp in quad_order:
+        mask = e03[qcol].astype(str).str.strip().eq(q_name)
+        n = int(mask.sum())
+        total_cases = int(e03.loc[mask, case_col].sum()) if case_col and mask.any() else 0
+        total_dep = ""
+        if dep_numeric is not None and mask.any():
+            s = dep_numeric[mask].sum()
+            if abs(s) >= 1e9: total_dep = f"${s/1e9:.1f}B"
+            elif abs(s) >= 1e6: total_dep = f"${s/1e6:.0f}M"
+            elif abs(s) >= 1e3: total_dep = f"${s/1e3:.0f}K"
+            elif s > 0: total_dep = f"${s:.0f}"
+        rows.append({
+            "Quadrant": q_name,
+            "PMC Count": n,
+            "Total Deposits": total_dep,
+            "Total Cases": total_cases,
+            "Interpretation": q_interp,
+        })
+    return pd.DataFrame(rows)
+
+
 def render_pmc_portfolio(ctx):
     e01 = ctx.entity.get("E01_DepositConcentr")
     e02 = ctx.entity.get("E02_TopPMCs")
@@ -507,7 +562,7 @@ def render_pmc_portfolio(ctx):
         "The operational friction described in previous sections does not carry equal business weight across all "
         "clients. The HOA deposit book totals approximately $24 billion across 1,658 PMCs, but that value is "
         "radically concentrated. The top five PMCs alone hold 56% of total deposits. The top fifty hold 77%. "
-        "Meanwhile, 550 PMCs carry less than $1 million each — a long tail of small accounts that generate "
+        "Meanwhile, 550 PMCs carry less than $1 million each -- a long tail of small accounts that generate "
         "operational load without proportional economic return.",
 
         "This concentration changes how friction should be interpreted. A 126-case unresolved backlog at a "
@@ -515,22 +570,30 @@ def render_pmc_portfolio(ctx):
         "The former is a retention risk; the latter is a cost question.",
 
         "Several findings from the data deserve specific attention. Among the top PMCs by deposit size, some show "
-        "signs of operational strain combined with relationship-management gaps. The RM check-in field — which records "
-        "the last time a relationship manager contacted a PMC — is only populated for 42% of PMCs. Of those with "
+        "signs of operational strain combined with relationship-management gaps. The RM check-in field -- which records "
+        "the last time a relationship manager contacted a PMC -- is only populated for 42% of PMCs. Of those with "
         "a recorded check-in, 407 (58%) have not been checked in over a year. Among high-deposit PMCs, some of the "
         "largest relationships show check-in gaps exceeding 1,000 days.",
-
-        "The friction-versus-value analysis identifies which PMCs sit in the 'High Value / High Friction' quadrant — "
-        "large deposit relationships generating disproportionate case volume per dollar on deposit. These are "
-        "the clearest candidates for AI-assisted intervention because the operational investment is justified by "
-        "the economic exposure. Conversely, 'Low Value / High Friction' PMCs — small-deposit clients generating "
-        "disproportionate case volume — may warrant a different conversation about relationship economics.",
     )
 
     parts = [narrative]
 
+    # Deposit rollup caveat
+    parts.append(callout("Important: How Deposits Are Counted",
+        "The Deposits Rollup field at the PMC level is a consolidated figure that includes deposits from all "
+        "underlying HOAs managed by that PMC. It updates weekly. PMC deposits and HOA deposits should not be "
+        "summed independently -- doing so would double-count. All deposit figures in this document use the "
+        "PMC-level rollup as the single source of truth. Additionally, the rollup includes IntraFi Cash Sweep "
+        "(ICS) and CDARS balances, though these may not appear in individual sub-account detail.",
+        "warn"))
+
     if not e01.empty:
         parts.append(sub_section("Deposit Distribution",
+            callout("Data Note: Blank Entity",
+                "The largest single record in the PMC file carries $11.71B in deposits but has no company name "
+                "and no state. This is likely a parent holding entity or system consolidation record, not an "
+                "operating PMC. It accounts for approximately 48% of the raw deposit total. Concentration "
+                "figures in this table should be interpreted with this in mind.", "warn") +
             p("This table shows the shape of the deposit book. 'pmcs_with_deposits' is how many PMCs have a non-zero "
               "deposit value recorded. The percentile rows (p25, median, p75, p90) show the spread. "
               "The 'TOP N CONCENTRATION' rows show what share of total deposits the largest N PMCs hold.") +
@@ -539,7 +602,8 @@ def render_pmc_portfolio(ctx):
 
     if not e02.empty:
         parts.append(sub_section("Top PMCs by Deposits",
-            p("Each row is a named PMC ranked by deposit size. Key columns: 'hoa_count' = number of HOAs managed by "
+            p("Each row is a named PMC ranked by deposit size. The first row is the blank entity described above -- "
+              "named client analysis begins at the second row. Key columns: 'hoa_count' = number of HOAs managed by "
               "this PMC. 'case_count' = total client cases in 3 months. 'unresolved' = cases still open. "
               "'median_hrs' = typical resolution time. 'top_subject' = the most common case type for this PMC. "
               "'pod' = the operational team handling this client. 'relationship_manager' = the assigned RM.") +
@@ -554,12 +618,33 @@ def render_pmc_portfolio(ctx):
             table(e05, max_rows=20)
         ))
 
+    # Friction-Value: quadrant summary first, then detail
     if not e03.empty:
-        parts.append(sub_section("Friction vs. Value",
-            p("This table ranks PMCs by 'cases_per_1M_deposits' — a measure of how much operational load a client "
-              "generates relative to the deposits they hold. Higher numbers mean more friction per dollar of value. "
-              "The 'quadrant' column classifies each PMC as High or Low on both value and friction dimensions.") +
-            table(e03, max_rows=25, trunc_len=100)
+        quad_summary = _build_quadrant_summary(e03)
+
+        parts.append(sub_section("Friction vs. Value -- Quadrant Overview",
+            prose(
+                "To understand the full picture of how operational friction relates to client value, every PMC with "
+                "both deposits and case data is classified into one of four quadrants. The classification uses the "
+                "median deposit amount and the median cases-per-million-dollars-on-deposit as the dividing lines. "
+                "The table below summarizes each quadrant.",
+
+                "The metric 'cases_per_1M_deposits' measures how many cases a PMC generates for every $1 million "
+                "in deposits they hold. A higher number means more operational load per dollar of relationship value. "
+                "This metric allows comparison across PMCs of very different sizes -- a $300M client with 600 cases "
+                "and a $3M client with 6 cases would have the same ratio.",
+            ) +
+            table(quad_summary, max_rows=4, trunc_len=200,
+                  note="Quadrant assignment uses the median deposit and median cases_per_1M_deposits as thresholds. "
+                       "PMCs above the median on both dimensions are 'High Value / High Friction.'")
+        ))
+
+        parts.append(sub_section("Friction vs. Value -- Detail",
+            p("This table is sorted by cases_per_1M_deposits (highest friction-to-value ratio first), which is why "
+              "the visible rows are predominantly Low Value / High Friction. To identify the recommended AI pilot "
+              "candidates, look for rows where quadrant = 'High Value / High Friction' -- these are high-deposit "
+              "clients with disproportionate operational burden.") +
+            table(e03, max_rows=30, trunc_len=100)
         ))
 
     if not e07.empty:
@@ -572,8 +657,10 @@ def render_pmc_portfolio(ctx):
 
     parts.append(so_what(
         "The deposit book is a concentration risk. A small number of PMC relationships carry disproportionate "
-        "economic value, and several of the largest show signs of neglect — stale RM check-ins, high unresolved "
-        "case counts, or both. AI-powered relationship health scoring is a retention play, not just an efficiency play."
+        "economic value, and several of the largest show signs of neglect -- stale RM check-ins, high unresolved "
+        "case counts, or both. AI-powered relationship health scoring is a retention play, not just an efficiency play. "
+        "The friction-value quadrant identifies which clients deserve proactive AI investment (High Value / High Friction) "
+        "and which may warrant a relationship economics review (Low Value / High Friction)."
     ))
 
     return "".join(parts)
@@ -587,13 +674,19 @@ def render_email_text(ctx):
     stats = ctx.internal.get("11_TextFieldStats")
 
     narrative = prose(
-        "The email file contains 2,423 records from a single day — March 11, 2026. While this is too narrow "
+        "The email file contains 2,423 records from a single day -- March 11, 2026. While this is too narrow "
         "for trend analysis, it is sufficient to assess whether the email corpus is rich enough to serve "
         "as input for GenAI applications like summarization, draft reply assistance, and sentiment detection.",
 
         "Every email in the sample links to a case (100% match rate). The split is 77% outbound "
         "(Sent or Completed status) and 23% inbound (Received). The high outbound ratio means that the team's "
-        "own reply patterns are well-represented — useful for training draft-reply models.",
+        "own reply patterns are well-represented -- useful for training draft-reply models.",
+
+        "Stakeholder confirmation adds an important detail about the Activity Subject field on case records. "
+        "This field contains the original email subject line that triggered the case -- not a CRM-generated label. "
+        "At 75% fill rate and a median of 54 characters, it preserves entity names, account numbers, transaction "
+        "types, and forwarded-chain context in natural language. This makes Activity Subject the strongest "
+        "candidate input for NLP-based triage, classification, or summarization on the case side of the data.",
 
         "Email bodies are stored as raw HTML with a median length of 17,767 characters. After stripping HTML tags, "
         "style blocks, and decoding entities, the usable text reduces to a median of 2,177 characters — roughly "
@@ -795,12 +888,45 @@ def render_usecase_map(ctx):
             table(longlist.head(25), max_rows=25, trunc_len=100)
         ))
 
+    # Stakeholder-informed analytical opportunities
+    parts.append(sub_section("Stakeholder-Informed Opportunities",
+        prose(
+            "Conversations with the operations team surfaced additional context that shapes the GenAI "
+            "opportunity beyond what the data files alone reveal.",
+
+            "A pre-case email queue exists in the CRM where bankers read incoming emails and decide whether "
+            "to convert them into cases. This queue sits upstream of everything analyzed in this document. "
+            "Access to this queue data would enable measurement of: the email-to-case conversion rate, the "
+            "decision latency (how long an email sits before becoming a case), and the volume of emails that "
+            "do not become cases at all. This is the natural upstream point for AI-assisted triage -- an AI "
+            "system that reads incoming emails, determines whether each should become a case, creates the case "
+            "if appropriate, and drafts an initial reply for the banker to review and action.",
+
+            "This workflow -- classify, create, draft, review -- was described by the operations team as the "
+            "ideal target state. It aligns directly with the triage and draft reply use case combination "
+            "identified in the data evidence above.",
+
+            "One important scoping constraint: fully automated responses are not currently acceptable for most "
+            "case types. However, specific scenarios were identified as candidates for automated nudge-style "
+            "replies -- for example, when a new account onboarding package is missing a required document, an "
+            "auto-generated response requesting the missing item would be acceptable. This shapes the pilot "
+            "design: start with human-in-the-loop (AI drafts, banker reviews and sends), with missing-document "
+            "auto-nudge as the first exception where full automation is permitted.",
+
+            "The SLA Start and Created On timestamps in the case data provide a way to measure the triage "
+            "delay today -- the gap between when an email arrives and when the banker creates a case from it. "
+            "Computing this gap across the 36,296 client cases would establish the baseline that any AI triage "
+            "system would need to improve against.",
+        )
+    ))
+
     parts.append(so_what(
         "Three use cases have strong data support today: triage/routing, email summarization, and "
         "missing-information detection. Escalation prediction is high-value but needs labeled outcomes. "
         "Draft reply assistance is feasible but needs more email history to validate. "
-        "The recommended starting point is missing-info detection — it requires no NLP, delivers immediate "
-        "visibility, and builds trust in the AI-assisted workflow."
+        "The recommended starting point is missing-info detection -- it requires no NLP, delivers immediate "
+        "visibility, and builds trust in the AI-assisted workflow. The pre-case email queue is the next "
+        "data asset to pursue -- it would unlock the full classify-create-draft-review workflow."
     ))
 
     return "".join(parts)
@@ -832,11 +958,13 @@ def render_next_steps(ctx):
     )
 
     additional = prose(
-        "In parallel, two data-quality actions would strengthen the foundation for future use cases:",
+        "In parallel, several data and infrastructure actions would strengthen the foundation for future use cases:",
     )
 
     data_actions = bullets([
-        "Request a longer email extract (1–2 weeks minimum) to validate email-based use cases beyond a single-day sample.",
+        "Request access to the pre-case email queue data. This queue -- where bankers read emails and decide whether to create cases -- is the upstream triage decision point. Access would enable measurement of conversion rates, decision latency, and the full classify-create-draft-review AI workflow.",
+        "Compute the SLA Start to Created On gap across all email-originated client cases. This gap measures the current triage delay and establishes the baseline that any AI triage system must improve against.",
+        "Request a longer email extract (1-2 weeks minimum) to validate email-based use cases beyond a single-day sample.",
         "Investigate the $11.71B blank-entity anomaly and the Arizona negative-deposit data quality issue before presenting deposit figures to leadership.",
         "Lift PMC entity completeness from 30% to 60%+ by prioritizing RM check-in field population and deposit data cleanup.",
     ])
@@ -853,14 +981,16 @@ def render_caveats(ctx):
             "It represents a point-in-time view, not a continuously updated data pipeline.",
         ) +
         bullets([
-            "Cases: 3-month operating window (December 18, 2025 – March 19, 2026). Not a full annual history. Seasonal patterns cannot be assessed.",
+            "Cases: 3-month operating window (December 18, 2025 - March 19, 2026). Not a full annual history. Seasonal patterns cannot be assessed.",
             "Emails: 1-day sample only (March 11, 2026). Communication patterns observed may not generalize across weeks or months.",
             "PMCs and HOAs: Current-state snapshots, not longitudinal entity history. Changes over time cannot be tracked.",
-            "An anomalous entity with $11.71 billion in deposits and no company name appears in the PMC file. It is likely a parent/system record and has been excluded from concentration narratives where noted.",
+            "An anomalous entity with $11.71 billion in deposits and no company name appears in the PMC file. It is likely a parent/system record and has been flagged wherever it affects concentration figures.",
+            "Deposits Rollup at the PMC level is a consolidated weekly figure that already includes deposits from all underlying HOAs. PMC deposits and HOA deposits must not be summed independently -- that would double-count. The rollup also includes ICS and CDARS balances that may not appear in sub-account detail.",
             "Arizona shows negative total deposits (-$53.8M). This is a data quality issue, not an economic signal.",
-            "HOA Company Type is 99.1% null — this field is unusable for analysis.",
+            "HOA Company Type is 99.1% null -- this field is unusable for analysis.",
             "NAICS codes are mono-valued in both files (73% = 531311 in PMCs, 87% = 813990 in HOAs). NAICS provides no segmentation power and should be treated as a data-quality finding, not an analytical variable.",
-            "The Case → HOA join rate is 7.6%. Direct case-to-HOA analysis is not supported. The valid path is Case → PMC → HOA.",
+            "Cases are tracked against PMCs by operating policy, not HOAs. The Case to HOA join rate of 7.6% reflects this design, not a data quality defect. The valid analytical path is Case to PMC to HOA.",
+            "Approximately 6% of HOAs are known to be orphaned (not linked to any PMC). This is a recognized data quality issue confirmed by stakeholders.",
             "Internal/system cases (15.8% of total) are excluded from all client-facing metrics. They are identified by company names AAB ADMIN, WAB ADMIN, and blank entries.",
             "Use case feasibility ratings are evidence-based assessments from the available data, not implementation commitments.",
         ]) +
