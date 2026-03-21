@@ -434,18 +434,42 @@ def render_workload(ctx):
                 "triage delay -- the time an email sits in the queue before a human reads it, decides it should "
                 "become a case, and creates that case.",
 
-                "This delay is directly measurable for every email-originated case in the dataset. Cases where "
-                "SLA Start equals Created On were either auto-created or originated from a non-email channel; "
-                "those are separated out. The remaining cases show how long the manual triage process actually takes.",
+                "Of the 36,296 client cases, 25,059 (69%) have a measurable triage gap -- meaning the email arrived "
+                "before the banker created the case. The remaining 31% have zero or near-zero gap, indicating "
+                "auto-created cases or non-email origins.",
 
-                "This is the baseline metric for any AI triage system. If the median delay is significant, it "
-                "quantifies the time savings an AI classifier could deliver by automatically reading the email, "
-                "determining whether it should become a case, and creating it -- reducing the gap toward zero.",
+                "The median triage delay is 58.6 minutes -- nearly an hour. One in four cases (P75) waits over "
+                "3.4 hours. One in ten (P90) waits over 18 hours -- overnight. The single largest bucket in the "
+                "distribution is the 1-2 hour range (3,694 cases), but there is also a significant overnight cluster: "
+                "3,308 cases sit for 8-24 hours, meaning they arrived after hours and were not triaged until the "
+                "next business morning.",
+
+                "The subject-level breakdown reveals that Fraud Alert is the only category with fast triage "
+                "(13-minute median) -- likely because it triggers immediate attention. Every other major subject "
+                "sits for 42-79 minutes at the median, with Research (77 min), New Account Request (76 min), and "
+                "Close Account (79 min) being the slowest. These are exactly the high-volume, fat-tail subjects "
+                "identified earlier as the primary GenAI targets.",
+
+                "Pod-level variance in triage speed mirrors the resolution-time variance seen earlier. The fastest pod "
+                "triages in a median of 32 minutes; the slowest takes 82 minutes. Pods that start fast also resolve fast.",
+
+                "The hour-of-day pattern is striking. Cases arriving at 7:00 AM have a 190-minute median triage delay -- "
+                "over three hours -- because these are overnight emails waiting for bankers to log in. By 9:00 AM the "
+                "median drops to 45 minutes as the team actively works the queue. After 5:00 PM, delays spike again.",
+
+                "This metric converts the abstract claim 'AI could help with email triage' into a specific operational "
+                "cost. Across 25,059 cases with triage gaps, the total time spent in the queue before case creation "
+                "is approximately 24,500 banker-hours over three months -- roughly 40 FTE-hours per week. If AI triage "
+                "reduced the median from 59 minutes to 5 minutes by automatically classifying emails and creating cases, "
+                "nearly all of that time would be returned to case resolution. The overnight queue at 7:00 AM is the "
+                "single highest-value deployment window: emails pre-classified before bankers log in means they start "
+                "the day with an organized queue instead of a pile of unread emails.",
             ) +
-            table(d16, max_rows=30,
+            table(d16, max_rows=35,
                   note="'triage_minutes' = gap between SLA Start (email received) and Created On (case created). "
                        "Cases with zero or negative gap are auto-created or non-email and excluded from the distribution. "
-                       "The BY SUBJECT and BY POD sections show where triage delays are longest.")
+                       "The BY SUBJECT and BY POD sections show where triage delays are longest. "
+                       "BY HOUR OF DAY shows when emails queue up -- 7:00 AM has a 190-minute median delay (overnight backlog).")
         ))
 
     parts.append(so_what(
