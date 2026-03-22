@@ -36,8 +36,8 @@ def strip_html(text):
     return text.strip()
 
 def remove_noise(text):
-    if not text: return ""
-    s = text
+    if pd.isna(text) or not text: return ""
+    s = str(text)
     s = re.sub(r"(?i)attention:\s*this email originated from outside.*?(?=\n\n|\Z)", " ", s, flags=re.S)
     s = re.sub(r"(?i)external email warning.*?(?=\n\n|\Z)", " ", s, flags=re.S)
     s = re.sub(r"(?i)caution:\s*external.*?(?=\n\n|\Z)", " ", s, flags=re.S)
@@ -152,12 +152,14 @@ def main():
     sample_idx = emails.sample(min(10, len(emails)), random_state=42).index
     v1_rows = []
     for idx in sample_idx:
-        raw_html = str(emails.loc[idx, desc_col]) if desc_col else ""
+        raw_val = emails.loc[idx, desc_col] if desc_col else ""
+        raw_html = "" if pd.isna(raw_val) else str(raw_val)
         stripped = strip_html(raw_html)
         cleaned = remove_noise(stripped)
+        subj_val = emails.loc[idx, subj_col] if subj_col else ""
         v1_rows.append({
             "email_row": int(idx) + 2,  # Excel row (1-indexed + header)
-            "subject": trunc(emails.loc[idx, subj_col], 80) if subj_col else "",
+            "subject": trunc(subj_val, 80) if not pd.isna(subj_val) else "",
             "raw_html_chars": len(raw_html),
             "raw_html_first300": trunc(raw_html, 300),
             "stripped_chars": len(stripped),
@@ -178,12 +180,14 @@ def main():
     print("V2: New vs quoted separation spot-check...")
     v2_rows = []
     for idx in sample_idx:
-        raw_html = str(emails.loc[idx, desc_col]) if desc_col else ""
-        stripped = strip_html(raw_html)
-        new_text, quoted_text, new_ratio = extract_new_content(stripped)
+        raw_val2 = emails.loc[idx, desc_col] if desc_col else ""
+        raw_html2 = "" if pd.isna(raw_val2) else str(raw_val2)
+        stripped2 = strip_html(raw_html2)
+        new_text, quoted_text, new_ratio = extract_new_content(stripped2)
+        subj_val2 = emails.loc[idx, subj_col] if subj_col else ""
         v2_rows.append({
             "email_row": int(idx) + 2,
-            "subject": trunc(emails.loc[idx, subj_col], 80) if subj_col else "",
+            "subject": trunc(subj_val2, 80) if not pd.isna(subj_val2) else "",
             "total_chars": len(stripped),
             "new_chars": len(new_text),
             "quoted_chars": len(quoted_text),
@@ -201,9 +205,9 @@ def main():
     print("V3: Signal detection spot-check...")
 
     # Preprocess all emails for signal detection
-    emails["_stripped"] = emails[desc_col].apply(strip_html) if desc_col else ""
-    emails["_cleaned"] = emails["_stripped"].apply(remove_noise)
-    emails["_subj_clean"] = emails[subj_col].apply(remove_noise) if subj_col else ""
+    emails["_stripped"] = emails[desc_col].fillna("").apply(strip_html) if desc_col else ""
+    emails["_cleaned"] = emails["_stripped"].fillna("").apply(remove_noise)
+    emails["_subj_clean"] = emails[subj_col].fillna("").apply(remove_noise) if subj_col else ""
     emails["_text"] = (emails["_subj_clean"] + " " + emails["_cleaned"].str[:1200]).str.strip()
     emails["_text_lower"] = emails["_text"].str.lower()
 
