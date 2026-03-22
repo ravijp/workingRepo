@@ -26,6 +26,7 @@ INTERNAL_EXTRACT_XLSX = r"C:\Users\YourName\Desktop\wab_output\wab_internal_extr
 CASES_DEEP_DIVE_XLSX  = r"C:\Users\YourName\Desktop\wab_output\wab_cases_deep_dive.xlsx"
 ENTITY_DEEP_DIVE_XLSX = r"C:\Users\YourName\Desktop\wab_output\wab_entity_deep_dive.xlsx"
 USECASE_XLSX          = r"C:\Users\YourName\Desktop\WAB_Ops_UseCases_2026-03-18.xlsx"  # optional
+EMAIL_INSIGHTS_XLSX   = r"C:\Users\YourName\Desktop\wab_output\wab_email_deep_insights.xlsx"  # optional
 OUTPUT_DIR            = r"C:\Users\YourName\Desktop\wab_html_story"
 
 SITE_TITLE = "WAB HOA Operations - GenAI Opportunity Assessment"
@@ -115,6 +116,7 @@ class Ctx:
         self.cases    = Book(CASES_DEEP_DIVE_XLSX)
         self.entity   = Book(ENTITY_DEEP_DIVE_XLSX)
         self.usecase  = Book(USECASE_XLSX)
+        self.insights = Book(EMAIL_INSIGHTS_XLSX)
         self.outdir   = ensure_dir(OUTPUT_DIR)
 
 
@@ -800,6 +802,330 @@ def render_email_text(ctx):
     return "".join(parts)
 
 
+def render_email_intelligence(ctx):
+    """Email deep-insights section — NLP topic modeling, content structure,
+    template coverage, missing-info detection, conversation threads, and
+    signal-by-subject dashboard.  Reads from the email_deep_insights workbook."""
+
+    i01 = ctx.insights.get("I01_DataScope")
+    i02 = ctx.insights.get("I02_ContentStructure")
+    i03 = ctx.insights.get("I03_TopicDiscovery")
+    i04 = ctx.insights.get("I04_MissingInfo")
+    i05 = ctx.insights.get("I05_OutboundTemplates")
+    i06 = ctx.insights.get("I06_ConversationThreads")
+    i07 = ctx.insights.get("I07_SignalBySubject")
+    i08 = ctx.insights.get("I08_TriageByIntent")
+
+    narrative = prose(
+        "The previous section established that the email corpus is rich enough to support GenAI applications. "
+        "This section goes deeper — applying NLP topic modeling, template-coverage analysis, missing-information "
+        "detection, and signal extraction to the 2,423 emails from the single-day sample. The goal is to move "
+        "from 'the data exists' to 'here is exactly what an AI model would see and what it could do.'",
+
+        "Several findings reshape the use-case picture. Outbound banker emails are far more repetitive than "
+        "expected — 69-87% of responses within major subjects cluster into near-duplicate templates. This "
+        "upgrades draft-reply assistance from MEDIUM to HIGH feasibility. Missing-information language appears "
+        "in 15% of inbound emails, with TIN (Taxpayer Identification Number) dominating at 258 mentions — a "
+        "clear automation target for onboarding nudges. And the median email is 71% quoted history, meaning "
+        "summarization value lies in extracting the new content from the noise, not in condensing long prose.",
+    )
+
+    parts = [narrative]
+
+    # --- I01: Data Scope ---
+    if not i01.empty:
+        parts.append(sub_section("Email Corpus Profile",
+            prose(
+                "The one-day sample contains 2,423 emails: 547 inbound (22.6%) and 1,857 outbound (76.6%). "
+                "All 2,423 link to cases (100% match rate), and 2,212 (91.3%) connect to client cases "
+                "specifically. After HTML stripping, the median clean body is 1,693 characters. The median "
+                "new-content portion — text that is not quoted or forwarded — is 526 characters (29% of "
+                "the total body). Over half of emails (53.7%) have more than 500 characters of genuinely "
+                "new content, which is the threshold for meaningful NLP input.",
+
+                "Signal detection across the full corpus found missing-information cues in 271 emails (11.2%), "
+                "follow-up cues in 184 (7.6%), and urgency cues in 387 (16.0%). These are keyword-based "
+                "detections — an LLM-based approach would likely surface more nuanced patterns.",
+            ) +
+            table(i01, max_rows=15, note="Source: I01_DataScope from email deep-insights workbook.")
+        ))
+
+    # --- I02: Content Structure by Subject ---
+    if not i02.empty:
+        # I02 has mixed layout: rows 2-11 are overall/inbound/outbound stats (metric rows with
+        # percentile columns), rows 12+ are BY SUBJECT with different columns (subject, emails,
+        # median_new_chars, median_new_ratio, median_body_chars).  Show them as separate tables.
+        subj_col = find_col(i02, "subject")
+        metric_col = find_col(i02, "metric")
+
+        # Overall / Inbound / Outbound summary rows (percentile distribution)
+        if metric_col:
+            summary_rows = i02[i02[metric_col].notna() & (i02[metric_col].astype(str).str.strip() != "")].copy()
+            # Keep only relevant columns (metric, p25, median, p75, mean) — drop subject-specific cols
+            summary_cols = [c for c in summary_rows.columns
+                           if find_col(pd.DataFrame(columns=[c]), "metric","p25","median","p75","mean") or c == metric_col]
+            if summary_cols:
+                summary_rows = summary_rows[summary_cols].dropna(how="all", axis=1)
+        else:
+            summary_rows = pd.DataFrame()
+
+        # By-subject rows (have a subject value)
+        if subj_col:
+            by_subj = i02[i02[subj_col].notna() & (i02[subj_col].astype(str).str.strip() != "")].copy()
+            # Keep only subject-specific columns, drop metric/percentile cols
+            subj_cols = [c for c in by_subj.columns
+                         if c == subj_col or find_col(pd.DataFrame(columns=[c]),
+                            "emails","median_new_chars","median_new_ratio","median_body_chars")]
+            if subj_cols:
+                by_subj = by_subj[subj_cols].dropna(how="all", axis=1)
+        else:
+            by_subj = pd.DataFrame()
+
+        parts.append(sub_section("New Content vs. Quoted History",
+            prose(
+                "Not all emails carry the same information density. The median email is 29% new content "
+                "and 71% quoted or forwarded history. But this ratio varies dramatically by subject and "
+                "direction.",
+
+                "Inbound emails have a 15% median new-content ratio (230 new chars at P25, 400 at median). "
+                "Outbound emails are higher at 36% (382 new chars at P25, 552 at median) — bankers write "
+                "more original text per message than clients do, because clients are replying into threads.",
+
+                "By subject, the variation is stark. Statements emails are 100% new content but only 205 "
+                "characters long — these are short, self-contained messages. Fraud Alert emails have a 30% "
+                "new-content ratio but 1,589 median body characters — long threads where the new part is "
+                "buried. NSF and Non-Post emails carry 22% new content with 1,638 median body chars. "
+                "New Account Request has only 13% new content but 2,123 median body chars — the longest "
+                "emails with the most quoted noise. This is where summarization adds the most value: "
+                "extracting the 13% that is new from a 2,000-character thread.",
+            ) +
+            (table(summary_rows, max_rows=12,
+                   note="Content structure distribution. Rows prefixed '--- OVERALL/INBOUND/OUTBOUND ---' "
+                        "show percentile distributions of new-content and quoted-content character counts.")
+             if not summary_rows.empty else "") +
+            (table(by_subj, max_rows=15,
+                   note="By-subject breakdown: emails = inbound client emails for that subject. "
+                        "median_new_chars = typical new content length. median_new_ratio = share that is new vs quoted.")
+             if not by_subj.empty else "")
+        ))
+
+    # --- I03: Topic Discovery (NMF) ---
+    if not i03.empty:
+        parts.append(sub_section("Hidden Intent Families (NMF Topic Modeling)",
+            prose(
+                "Within each case subject, emails are not monolithic. Non-negative Matrix Factorization (NMF) "
+                "topic modeling reveals distinct intent families hiding inside broad subject categories.",
+
+                "Account Maintenance, for example, splits into three topics: a dominant banking-operations "
+                "cluster (56% of emails, terms: bank, alliance, banker, loan), an encrypted-message/Proofpoint "
+                "cluster (34%, terms: intended, email, message, information), and a small CD-specific cluster "
+                "(10%, terms: ana, cd, reynolds, cd maturity). The Proofpoint cluster is pure noise — these "
+                "are encrypted-message read receipts, not actionable client communication.",
+
+                "This pattern repeats across subjects. Research splits into a general banking topic (72.9%) "
+                "and a location-specific topic (20.8%, terms: office, email, dallas, rose city). NSF and "
+                "Non-Post splits into a banker-response topic (68.8%), a transaction-detail topic (16.7%), "
+                "and a Proofpoint-noise topic (14.6%). The Proofpoint noise is a consistent finding: 58.6% "
+                "of CD Maintenance emails and 52.4% of Statements emails are encrypted-message receipts "
+                "that an AI preprocessing pipeline should filter before any classification or summarization.",
+            ) +
+            table(i03, max_rows=25,
+                  note="NMF topics per case subject. 'pct_of_subject' = share of emails in that subject "
+                       "assigned to this topic. 'top_terms' = the most distinctive words for this topic cluster.")
+        ))
+
+    # --- I04: Missing-Info Detection ---
+    if not i04.empty:
+        # Split into by-subject, top-doc-terms, and examples sections — drop the section column
+        sec_col = find_col(i04, "section")
+        if sec_col:
+            by_subj_mi = i04[i04[sec_col].astype(str).str.strip().eq("BY SUBJECT")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+            top_docs = i04[i04[sec_col].astype(str).str.strip().eq("TOP DOC TERMS")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+            examples = i04[i04[sec_col].astype(str).str.strip().eq("EXAMPLES")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+        else:
+            by_subj_mi, top_docs, examples = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        parts.append(sub_section("Missing-Information Detection",
+            prose(
+                "A keyword-based scan of inbound client emails identifies messages that reference missing "
+                "documents, pending items, or incomplete information. Across 547 inbound emails, 271 (11.2% "
+                "of all emails, higher among inbound) contain at least one missing-information cue.",
+
+                "The document terms that appear most frequently tell a clear story. TIN (Taxpayer "
+                "Identification Number) dominates with 258 mentions — nearly half of all document references. "
+                "EIN follows at 61, then CD maturity (23), signature card (13), certificate of deposit (7), "
+                "W9 (4), management agreement (4), articles of incorporation (2), and CDARS agreement (2). "
+                "The concentration on TIN aligns with onboarding workflows where new accounts cannot be "
+                "fully opened without a taxpayer ID.",
+
+                "By subject, NSF and Non-Post leads with a 25% missing-cue rate (12 of 48 inbound emails). "
+                "New Account Request shows 2.7% — low in percentage but important because these emails have "
+                "the highest doc_terms_mentioned count (31 total) and the longest case hours (median 29.2h). "
+                "Research emails carry a 16.7% missing-info rate with 31 doc terms and 25.8-hour median "
+                "case duration. The combination of missing-info signals and long resolution times in these "
+                "subjects makes them prime candidates for automated 'missing document' nudge replies.",
+            ) +
+            (table(by_subj_mi, max_rows=15,
+                   note="Missing-info cue rates by case subject. 'missing_cue_count' = inbound emails with at least one cue. "
+                        "'doc_terms_mentioned' = total document-term references across all emails in that subject.")
+             if not by_subj_mi.empty else "") +
+            (sub_section("Top Document Terms Referenced",
+                table(top_docs, max_rows=12,
+                      note="Frequency of specific document terms in inbound emails. TIN at 258 mentions is the dominant signal."))
+             if not top_docs.empty else "") +
+            (sub_section("Example Emails with Missing-Info Cues",
+                p("These are real inbound emails where missing-information language was detected. "
+                  "The 'doc_terms' column shows which document types were mentioned. "
+                  "The 'sample_new_content' column shows the extracted new-content portion of the email.") +
+                table(examples, max_rows=10, trunc_len=200))
+             if not examples.empty else "")
+        ))
+
+    # --- I05: Outbound Template Coverage ---
+    if not i05.empty:
+        parts.append(sub_section("Outbound Response Templates",
+            prose(
+                "One of the most impactful findings from the email deep-dive is the degree of repetition "
+                "in outbound banker responses. Using TF-IDF cosine similarity clustering, outbound emails "
+                "within each case subject were grouped into near-duplicate response families.",
+
+                "The results are striking. New Account Request outbound emails show 85.9% template coverage — "
+                "meaning 85.9% of the 198 outbound emails in that subject cluster into one of 5 recognizable "
+                "response patterns. CD Maintenance reaches 90.3% (134 outbound, 5 clusters). Account "
+                "Maintenance hits 82.4% (170 outbound). NSF and Non-Post is at 92.6% (108 outbound). "
+                "Even the lowest-coverage subjects exceed 69%.",
+
+                "This changes the draft-reply feasibility assessment fundamentally. If nearly 9 out of 10 "
+                "responses in a subject follow one of a handful of templates, an AI system does not need "
+                "to generate creative prose — it needs to select the right template and fill in the "
+                "case-specific details (names, account numbers, dates). This is a retrieval-augmented "
+                "generation (RAG) pattern, not a freeform generation problem, and it is significantly "
+                "easier to build, validate, and deploy.",
+            ) +
+            table(i05, max_rows=40, trunc_len=200,
+                  note="Each row is one cluster within a subject. 'cluster_size' = emails in this pattern. "
+                       "'template_coverage_pct' = share of outbound emails in the subject covered by the top-5 clusters. "
+                       "'sample_text' = representative email from the cluster (truncated).")
+        ))
+
+    # --- I06: Conversation Threads ---
+    if not i06.empty:
+        sec_col = find_col(i06, "section")
+        if sec_col:
+            thread_dist = i06[i06[sec_col].astype(str).str.strip().eq("THREAD DISTRIBUTION")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+            by_subj_th = i06[i06[sec_col].astype(str).str.strip().eq("BY SUBJECT")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+            heaviest = i06[i06[sec_col].astype(str).str.strip().eq("HEAVIEST THREADS")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+        else:
+            thread_dist, by_subj_th, heaviest = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        parts.append(sub_section("Conversation Thread Depth",
+            prose(
+                "Email threads reveal case complexity. Of 917 cases with email activity on the sampled day, "
+                "the median case had 2.0 emails and the P90 had 4.0. The maximum was 16 emails on a single "
+                "case. 88 cases (9.6%) had 5 or more emails — these are the 'heavy threads' where a banker "
+                "spends the most time re-reading quoted history to find the latest update.",
+
+                "By subject, New Account Request generates the most threads (130 cases, median 2 emails, "
+                "P90 of 4) with 8.5% having missing-info cues. Research cases show 25.0% with follow-up "
+                "cues and median case hours of 19.9. CD Maintenance has only 4.5% follow-up cues but a "
+                "staggering 125.4 median case hours, driven by structurally slow workflows.",
+
+                "The heaviest individual threads tell the story of where summarization would save the most "
+                "time. The top thread (NSF and Non-Post, 16 emails, 3 inbound, 13 outbound) spans multiple "
+                "actors and 12 hours. A banker picking up this case would need to read through the full "
+                "chain to understand the current state — exactly the task an AI summarizer should handle.",
+            ) +
+            (table(thread_dist, max_rows=6,
+                   note="Thread distribution summary: how many cases have emails, median/P90 thread depth, and heavy-thread count.")
+             if not thread_dist.empty else "") +
+            (table(by_subj_th, max_rows=18,
+                   note="Thread metrics by case subject. 'median_emails' = typical email count per case. "
+                        "'pct_with_missing_cue' and 'pct_with_followup' = share of cases in that subject with detected signals.")
+             if not by_subj_th.empty else "") +
+            (table(heaviest, max_rows=15,
+                   note="Heaviest individual threads on the sampled day. 'email_count' = total emails on that case. "
+                        "'actors' = distinct senders/recipients. 'case_hours' = total case resolution time.")
+             if not heaviest.empty else "")
+        ))
+
+    # --- I07: Signal Dashboard by Subject ---
+    if not i07.empty:
+        parts.append(sub_section("Signal Dashboard by Subject",
+            prose(
+                "This dashboard consolidates all email intelligence signals — missing-info, follow-up, urgency — "
+                "alongside case resolution metrics for each major subject. It is the decision-support view for "
+                "prioritizing which subjects to target first with AI.",
+
+                "NSF and Non-Post stands out: 25.0% missing-info rate, 37.5% urgency rate, and fast resolution "
+                "(1.4h median, 2.1% unresolved). The high signal rates combined with fast resolution suggest "
+                "that bankers already recognize and act on these signals quickly — AI could automate the "
+                "recognition step. CD Maintenance shows a different pattern: 44.8% unresolved, 138.2h median "
+                "case hours, but only 6.9% missing-info and 27.6% urgency. The problem here is structural "
+                "slowness, not missing signals.",
+
+                "The most actionable finding: subjects with high missing-info rates AND long resolution times "
+                "are the prime AI targets. Research (16.7% missing-info, 18.8% follow-up, 25.8h median, "
+                "8.3% unresolved) and Close Account (15.8% missing-info, 5.3% follow-up, 26.2h median, "
+                "0.0% unresolved) fit this profile. New Account Request (2.7% missing-info but 29.2h median, "
+                "8.0% unresolved) benefits more from draft-reply than from missing-info detection.",
+            ) +
+            table(i07, max_rows=15,
+                  note="Combined signal dashboard. 'missing_info_pct' = share of inbound emails with missing-info cues. "
+                       "'urgency_pct' = share with urgency language. 'pct_unresolved' = cases still open at extract date.")
+        ))
+
+    # --- I08: Triage by Intent ---
+    if not i08.empty:
+        sec_col = find_col(i08, "section")
+        if sec_col:
+            by_signal = i08[i08[sec_col].astype(str).str.strip().eq("TRIAGE BY SIGNAL")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+            by_length = i08[i08[sec_col].astype(str).str.strip().eq("TRIAGE BY CONTENT LENGTH")].drop(columns=[sec_col]).dropna(how="all", axis=1).copy()
+        else:
+            by_signal, by_length = i08, pd.DataFrame()
+
+        parts.append(sub_section("Do Email Signals Predict Triage Speed?",
+            prose(
+                "A natural question is whether emails with detectable signals (missing-info, follow-up, urgency) "
+                "get triaged faster or slower than emails without them. The answer is counter-intuitive.",
+
+                "Emails flagged with missing-info cues have a median triage time of 41.5 minutes — lower than "
+                "the 55.1 minutes for unflagged emails. Follow-up cues show the opposite: 63.3 minutes flagged "
+                "vs 52.2 minutes unflagged. Urgency cues are faster: 45.4 minutes flagged vs 54.1 unflagged.",
+
+                "The interpretation: bankers appear to naturally triage signal-rich emails faster (missing-info "
+                "and urgency cues catch their eye), while follow-up requests — which often sit in longer "
+                "threads — take more time to parse. An AI system that pre-classifies emails by signal type "
+                "would formalize and accelerate the pattern bankers are already following intuitively.",
+
+                "Content length also matters. Short emails (<200 characters of new content) have a 60.3-minute "
+                "median triage time, likely because they lack context and force the banker to investigate. "
+                "Mid-length emails (200-500 chars) triage fastest at 48.9 minutes. The longest emails (1500+ "
+                "chars) take 53.5 minutes — more text to read. An AI summarizer that reduces long emails to "
+                "their essential content would flatten this curve.",
+            ) +
+            (table(by_signal, max_rows=5,
+                   note="Triage time by signal type. 'flagged_median_triage_min' = median triage delay for emails "
+                        "WITH the signal. 'unflagged_median_triage_min' = median for emails WITHOUT it.")
+             if not by_signal.empty else "") +
+            (table(by_length, max_rows=5,
+                   note="Triage time by new-content length bucket. Shorter emails take longer to triage (less context); "
+                        "mid-length emails (200-500 chars) are triaged fastest.")
+             if not by_length.empty else "")
+        ))
+
+    parts.append(so_what(
+        "The email deep-dive upgrades three use cases. Draft Reply Assistance moves from MEDIUM to HIGH "
+        "feasibility — 69-87% of outbound emails follow repeatable templates, making this a retrieval problem, "
+        "not a generation problem. Missing-Info Detection is confirmed with TIN as the dominant signal (258 "
+        "mentions) — onboarding nudges are the clear first target. Email Summarization is reframed: the value "
+        "is not condensing long prose but extracting the 29% of new content from 71% quoted noise, especially "
+        "in heavy threads and subjects like New Account Request (13% new-content ratio, 2,123 chars). "
+        "Proofpoint encrypted-message receipts (52-67% of some subjects) should be filtered in preprocessing."
+    ))
+
+    return "".join(parts)
+
+
 def render_geo_rm_platform(ctx):
     e04 = ctx.entity.get("E04_StateProfile")
     e08 = ctx.entity.get("E08_PlatformMix")
@@ -864,6 +1190,7 @@ def render_geo_rm_platform(ctx):
 
 def render_usecase_map(ctx):
     d15 = ctx.cases.get("D15_GenAI_Evidence")
+    i09 = ctx.insights.get("I09_EvidenceScorecard")
     top20 = ctx.usecase.get("Top 20 v2")
     longlist = ctx.usecase.get("Expanded Longlist v2")
 
@@ -897,11 +1224,13 @@ def render_usecase_map(ctx):
                 "drifting toward the P90 boundary — even one business day earlier — would prevent backlog accumulation. "
                 "The gap: we do not currently have labeled escalation outcomes (was this case actually escalated?). "
                 "Building that label set is the prerequisite.", "warn") +
-        callout("Draft Reply Assistance — MEDIUM feasibility",
-                "2,423 emails from one day, 77% outbound. The top email-generating subjects (New Account Request 275, "
-                "Research 253, Account Maintenance 235) show repetitive patterns. A draft-reply model trained on sent "
-                "emails for the top 3–5 subjects could generate first-pass responses. The constraint is that we only "
-                "have one day of email data to assess template coverage.", "warn") +
+        callout("Draft Reply Assistance — HIGH feasibility (upgraded)",
+                "Email deep-dive reveals 69-87% of outbound banker responses within major subjects cluster into "
+                "near-duplicate templates. New Account Request: 85.9% template coverage (198 outbound, 5 clusters). "
+                "CD Maintenance: 90.3% (134 outbound). NSF and Non-Post: 92.6% (108 outbound). Account Maintenance: "
+                "82.4% (170 outbound). This means an AI system needs to select the right template and fill in "
+                "case-specific details (RAG pattern), not generate creative prose — significantly easier to "
+                "build, validate, and deploy.", "info") +
         callout("Workflow Copilot — MEDIUM, subject-specific",
                 "Among the top-15 subjects by volume, Signature Card (155h median), CD Maintenance (98h), and "
                 "IntraFi Maintenance (91h) are structurally slow. A handful of low-volume niche subjects (ePay, "
@@ -912,6 +1241,17 @@ def render_usecase_map(ctx):
     )
 
     parts = [narrative, evidence_prose]
+
+    if not i09.empty:
+        parts.append(sub_section("Email Deep-Dive Evidence Scorecard",
+            p("This scorecard synthesizes the email deep-insights analysis into a use-case-by-use-case verdict. "
+              "Each row evaluates one GenAI use case against the email data, with a metric, threshold, and "
+              "pass/fail verdict. The 'implication' column describes what the verdict means for implementation.") +
+            table(i09, max_rows=10, trunc_len=200,
+                  note="Verdicts: PASS = data clearly supports the use case. MARGINAL = partially supported. "
+                       "CHECK TABLE / CHECK THREAD SHEET = evidence exists but requires deeper examination. "
+                       "WEAK = current data does not support the use case as hypothesized.")
+        ))
 
     if not d15.empty:
         parts.append(sub_section("Data Evidence Summary",
@@ -970,9 +1310,10 @@ def render_usecase_map(ctx):
     ))
 
     parts.append(so_what(
-        "Three use cases have strong data support today: triage/routing, email summarization, and "
-        "missing-information detection. Escalation prediction is high-value but needs labeled outcomes. "
-        "Draft reply assistance is feasible but needs more email history to validate. "
+        "Four use cases now have strong data support: triage/routing, email summarization, "
+        "missing-information detection, and draft reply assistance (upgraded to HIGH after template "
+        "coverage analysis showed 69-87% of outbound emails follow repeatable patterns). "
+        "Escalation prediction remains high-value but needs labeled outcomes. "
         "The recommended starting point is missing-info detection -- it requires no NLP, delivers immediate "
         "visibility, and builds trust in the AI-assisted workflow. The pre-case email queue is the next "
         "data asset to pursue -- it would unlock the full classify-create-draft-review workflow."
@@ -1059,6 +1400,7 @@ SECTIONS = [
     ("data_quality",     "Data Quality and Joinability",          render_data_quality),
     ("pmc_portfolio",    "Client Portfolio, Deposits, and Risk",  render_pmc_portfolio),
     ("email_text",       "Email and Text Feasibility",            render_email_text),
+    ("email_intel",      "Email Intelligence Deep-Dive",          render_email_intelligence),
     ("geo_platform",     "Geography, Platforms, and Structure",   render_geo_rm_platform),
     ("usecase_map",      "GenAI Use Case Evidence Map",           render_usecase_map),
     ("next_steps",       "Recommended Next Steps",                render_next_steps),
