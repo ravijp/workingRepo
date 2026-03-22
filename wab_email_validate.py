@@ -39,24 +39,21 @@ def remove_noise(text):
     if pd.isna(text) or not text: return ""
     s = str(text)
 
-    # FIX A19: WAB security banner is a 3-line block:
-    #   ATTENTION: This email originated from outside of the WAB Network.
-    #   DO NOT click on any links or download attachments from unknown
-    #   senders!!!
-    # Followed by a horizontal rule. Match the full block as one unit.
+    # FIX A19: WAB security banner. After HTML stripping, the banner becomes
+    # a single line or whitespace-separated block. Match flexibly with \s+
+    # between key phrases to handle any whitespace/newline variation.
     s = re.sub(
-        r"(?i)ATTENTION:\s*This email originated from outside of the WAB Network\.?\s*"
-        r"DO NOT click on any links or download attachments from unknown\s*"
+        r"(?i)ATTENTION\s*:\s*This\s+email\s+originated\s+from\s+outside\s+of\s+the\s+WAB\s+Network\.?\s*"
+        r"DO\s+NOT\s+click\s+on\s+any\s+links\s+or\s+download\s+attachments\s+from\s+unknown\s*"
         r"senders\s*!{0,5}",
         " ", s
     )
-    # Also catch slight variations (different wording, missing parts)
-    s = re.sub(r"(?i)ATTENTION:\s*This email originated from outside[^\n]*\n?[^\n]*DO NOT click[^\n]*\n?[^\n]*senders[^\n]*", " ", s)
-    # Catch standalone fragments if the banner was partially stripped by HTML parsing
-    s = re.sub(r"(?i)DO NOT click on any links or download attachments from unknown\s*senders\s*!{0,5}", " ", s)
+    # Fallback: match each piece independently in case the banner is split
+    s = re.sub(r"(?i)ATTENTION\s*:\s*This\s+email\s+originated\s+from\s+outside\s+of\s+the\s+WAB\s+Network\.?", " ", s)
+    s = re.sub(r"(?i)DO\s+NOT\s+click\s+on\s+any\s+links\s+or\s+download\s+attachments\s+from\s+unknown\s+senders\s*!{0,5}", " ", s)
     # Other security banner variants
-    s = re.sub(r"(?i)external email warning[^\n]*", " ", s)
-    s = re.sub(r"(?i)caution:\s*external[^\n]*", " ", s)
+    s = re.sub(r"(?i)external\s+email\s+warning[^\n]*", " ", s)
+    s = re.sub(r"(?i)caution\s*:\s*external[^\n]*", " ", s)
 
     # Forwarded headers — match ONE header block per occurrence, not across multiple blocks.
     # Use non-DOTALL so .*? stops at newlines within each field.
