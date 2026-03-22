@@ -60,9 +60,11 @@ DOC_TERMS = [
 ]
 
 # Cues that an email is requesting missing information
+# Validated: removed "required" (false-positive on "Action Required" headers),
+# "need the" (too generic), per V3 validation round 2
 MISSING_CUES = [
-    "missing", "not received", "still need", "need the", "need your",
-    "please provide", "please send", "awaiting", "required", "incomplete",
+    "missing", "not received", "still need", "need your",
+    "please provide", "please send", "awaiting", "incomplete",
     "once we receive", "can you send", "have not received", "pending receipt",
     "not yet received", "still waiting for", "in order to proceed",
     "unable to process", "cannot proceed without",
@@ -77,8 +79,10 @@ FOLLOWUP_CUES = [
 ]
 
 # Urgency language
+# Validated: removed "today" (false-positive on date references like
+# "today's transactions"), per V3 validation round 2
 URGENCY_CUES = [
-    "urgent", "asap", "immediately", "today", "end of day", "eod",
+    "urgent", "asap", "immediately", "end of day", "eod",
     "rush", "critical", "time sensitive", "deadline", "priority",
     "expedite", "right away", "as soon as possible",
 ]
@@ -192,15 +196,23 @@ def remove_noise(text):
     if not text: return ""
     s = text
 
-    # Security banners (external email warnings)
-    s = re.sub(r"(?i)attention:\s*this email originated from outside.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)external email warning.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)caution:\s*external.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    # Do NOT click links warnings
-    s = re.sub(r"(?i)do not click links.*?(?=\n\n|\Z)", " ", s, flags=re.S)
+    # WAB security banner — match with \s+ between words to handle any
+    # whitespace/newline variation after HTML stripping
+    s = re.sub(
+        r"(?i)ATTENTION\s*:\s*This\s+email\s+originated\s+from\s+outside\s+of\s+the\s+WAB\s+Network\.?\s*"
+        r"DO\s+NOT\s+click\s+on\s+any\s+links\s+or\s+download\s+attachments\s+from\s+unknown\s*"
+        r"senders\s*!{0,5}",
+        " ", s
+    )
+    # Fallback: match each piece independently in case the banner is split
+    s = re.sub(r"(?i)ATTENTION\s*:\s*This\s+email\s+originated\s+from\s+outside\s+of\s+the\s+WAB\s+Network\.?", " ", s)
+    s = re.sub(r"(?i)DO\s+NOT\s+click\s+on\s+any\s+links\s+or\s+download\s+attachments\s+from\s+unknown\s+senders\s*!{0,5}", " ", s)
+    # Other security banner variants
+    s = re.sub(r"(?i)external\s+email\s+warning[^\n]*", " ", s)
+    s = re.sub(r"(?i)caution\s*:\s*external[^\n]*", " ", s)
 
-    # Forwarded email headers (From: ... Sent: ... To: ... Subject: ...)
-    s = re.sub(r"(?i)from:\s.*?sent:\s.*?to:\s.*?subject:\s[^\n]*", " ", s, flags=re.S)
+    # Forwarded email headers — match ONE header block per occurrence
+    s = re.sub(r"(?i)^from:\s+[^\n]+\n\s*sent:\s+[^\n]+\n\s*to:\s+[^\n]+\n\s*(?:cc:\s+[^\n]+\n\s*)?subject:\s+[^\n]*", " ", s, flags=re.MULTILINE)
     s = re.sub(r"(?i)on .{10,60} wrote:\s*", " ", s)
 
     # Horizontal rules / separator lines
