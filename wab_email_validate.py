@@ -38,19 +38,33 @@ def strip_html(text):
 def remove_noise(text):
     if pd.isna(text) or not text: return ""
     s = str(text)
-    s = re.sub(r"(?i)attention:\s*this email originated from outside.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)external email warning.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)caution:\s*external.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)do not click links.*?(?=\n\n|\Z)", " ", s, flags=re.S)
-    s = re.sub(r"(?i)from:\s.*?sent:\s.*?to:\s.*?subject:\s[^\n]*", " ", s, flags=re.S)
+
+    # FIX A19: Security banners — match only the banner paragraph (up to next newline),
+    # NOT across newlines. The old regex with re.S consumed the entire email body.
+    s = re.sub(r"(?i)attention:\s*this email originated from outside[^\n]*", " ", s)
+    s = re.sub(r"(?i)do not click links or open attachments[^\n]*", " ", s)
+    s = re.sub(r"(?i)external email warning[^\n]*", " ", s)
+    s = re.sub(r"(?i)caution:\s*external[^\n]*", " ", s)
+    # WAB-specific: the full banner is usually 2-3 lines, catch continuation lines
+    s = re.sub(r"(?i)unless you recognize the sender[^\n]*", " ", s)
+    s = re.sub(r"(?i)and know the content is safe[^\n]*", " ", s)
+
+    # Forwarded headers — match ONE header block per occurrence, not across multiple blocks.
+    # Use non-DOTALL so .*? stops at newlines within each field.
+    s = re.sub(r"(?i)^from:\s+[^\n]+\n\s*sent:\s+[^\n]+\n\s*to:\s+[^\n]+\n\s*(?:cc:\s+[^\n]+\n\s*)?subject:\s+[^\n]*", " ", s, flags=re.MULTILINE)
     s = re.sub(r"(?i)on .{10,60} wrote:\s*", " ", s)
+
+    # Separator lines
     s = re.sub(r"_{5,}", " ", s)
     s = re.sub(r"-{5,}", " ", s)
+
+    # Signature blocks — only from last 30% of text
     cutpoint = max(len(s) * 7 // 10, 200)
     head = s[:cutpoint]
     tail = s[cutpoint:]
     tail = re.sub(r"(?i)\b(?:best regards|regards|sincerely|thanks|thank you)\s*,?\s*\n.*", "", tail, flags=re.S)
     s = head + tail
+
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -94,8 +108,10 @@ def find_col(df, *candidates):
     return None
 
 MISSING_CUES = [
-    "missing", "not received", "still need", "need the", "need your",
-    "please provide", "please send", "awaiting", "required", "incomplete",
+    # FIX A22: Removed "required" (triggers on "Action Required" / "Response Required" headers)
+    # FIX A22: Removed "need the" (too generic — triggers on normal conversational English)
+    "missing", "not received", "still need", "need your",
+    "please provide", "please send", "awaiting", "incomplete",
     "once we receive", "can you send", "have not received", "pending receipt",
     "not yet received", "still waiting for", "in order to proceed",
     "unable to process", "cannot proceed without",
@@ -107,10 +123,32 @@ FOLLOWUP_CUES = [
     "wanted to check", "reaching out again", "second request",
 ]
 URGENCY_CUES = [
-    "urgent", "asap", "immediately", "today", "end of day", "eod",
+    # FIX A22: Removed "today" (triggers on date references like "today's transactions")
+    "urgent", "asap", "immediately", "end of day", "eod",
     "rush", "critical", "time sensitive", "deadline", "priority",
     "expedite", "right away", "as soon as possible",
 ]
+
+
+def remove_noise_OLD(text):
+    """Original version with the aggressive banner regex — kept for V1 comparison only."""
+    if pd.isna(text) or not text: return ""
+    s = str(text)
+    s = re.sub(r"(?i)attention:\s*this email originated from outside.*?(?=\n\n|\Z)", " ", s, flags=re.S)
+    s = re.sub(r"(?i)external email warning.*?(?=\n\n|\Z)", " ", s, flags=re.S)
+    s = re.sub(r"(?i)caution:\s*external.*?(?=\n\n|\Z)", " ", s, flags=re.S)
+    s = re.sub(r"(?i)do not click links.*?(?=\n\n|\Z)", " ", s, flags=re.S)
+    s = re.sub(r"(?i)from:\s.*?sent:\s.*?to:\s.*?subject:\s[^\n]*", " ", s, flags=re.S)
+    s = re.sub(r"(?i)on .{10,60} wrote:\s*", " ", s)
+    s = re.sub(r"_{5,}", " ", s)
+    s = re.sub(r"-{5,}", " ", s)
+    cutpoint = max(len(s) * 7 // 10, 200)
+    head = s[:cutpoint]
+    tail = s[cutpoint:]
+    tail = re.sub(r"(?i)\b(?:best regards|regards|sincerely|thanks|thank you)\s*,?\s*\n.*", "", tail, flags=re.S)
+    s = head + tail
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def write_sheet(writer, name, df):
@@ -155,19 +193,19 @@ def main():
         raw_val = emails.loc[idx, desc_col] if desc_col else ""
         raw_html = "" if pd.isna(raw_val) else str(raw_val)
         stripped = strip_html(raw_html)
-        cleaned = remove_noise(stripped)
+        cleaned_OLD = remove_noise_OLD(stripped)
+        cleaned_NEW = remove_noise(stripped)
         subj_val = emails.loc[idx, subj_col] if subj_col else ""
         v1_rows.append({
-            "email_row": int(idx) + 2,  # Excel row (1-indexed + header)
+            "email_row": int(idx) + 2,
             "subject": trunc(subj_val, 80) if not pd.isna(subj_val) else "",
-            "raw_html_chars": len(raw_html),
-            "raw_html_first300": trunc(raw_html, 300),
             "stripped_chars": len(stripped),
-            "stripped_first300": trunc(stripped, 300),
-            "cleaned_chars": len(cleaned),
-            "cleaned_first300": trunc(cleaned, 300),
-            "chars_lost_in_strip": len(raw_html) - len(stripped),
-            "chars_lost_in_clean": len(stripped) - len(cleaned),
+            "stripped_first200": trunc(stripped, 200),
+            "OLD_cleaned_chars": len(cleaned_OLD),
+            "OLD_cleaned_first200": trunc(cleaned_OLD, 200),
+            "NEW_cleaned_chars": len(cleaned_NEW),
+            "NEW_cleaned_first200": trunc(cleaned_NEW, 200),
+            "chars_recovered": len(cleaned_NEW) - len(cleaned_OLD),
         })
     v1 = pd.DataFrame(v1_rows)
 
