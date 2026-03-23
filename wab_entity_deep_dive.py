@@ -181,6 +181,14 @@ def prepare_pmc(pmc):
     if col_map["pmc_id"]:
         df["_pmc_id"] = df[col_map["pmc_id"]].astype(str).str.strip()
 
+    # Exclude blank-name PMC rows — these carry aggregated deposit figures
+    # (e.g. HOA-level rollups) that distort concentration and top-PMC metrics.
+    if "_name" in df.columns:
+        blank = df["_name"].str.strip().eq("")
+        if blank.any():
+            log(f"  Excluding {blank.sum()} blank-name PMC row(s)")
+            df = df[~blank].reset_index(drop=True)
+
     df._col_map = col_map
     return df
 
@@ -498,9 +506,8 @@ def sheet_e04_state_profile(pmc, hoa, cases):
 
     # PMC by state
     if "_state" in pmc.columns:
-        pmc_st = pmc.groupby("_state").agg(
-            pmc_count=("_state", "size"),
-        ).reset_index().rename(columns={"_state": "state"})
+        pmc_st = pmc.groupby("_state").size().reset_index(name="pmc_count")
+        pmc_st.rename(columns={"_state": "state"}, inplace=True)
         if "_deposits_best" in pmc.columns:
             dep_st = pmc.groupby("_state")["_deposits_best"].sum().reset_index(name="pmc_deposits")
             dep_st.rename(columns={"_state": "state"}, inplace=True)
@@ -538,7 +545,8 @@ def sheet_e04_state_profile(pmc, hoa, cases):
         if c in result.columns:
             result[c] = result[c].fillna(0).astype(int)
 
-    result = result.sort_values("pmc_count", ascending=False).head(25).reset_index(drop=True)
+    sort_col = "pmc_count" if "pmc_count" in result.columns else result.columns[0]
+    result = result.sort_values(sort_col, ascending=False).head(25).reset_index(drop=True)
     return result
 
 
@@ -858,19 +866,6 @@ def main():
     hoa    = prepare_hoa(hoa_raw) if not hoa_raw.empty else pd.DataFrame()
     cases  = prepare_cases_light(cases_raw) if not cases_raw.empty else pd.DataFrame()
     emails = prepare_emails_light(email_raw) if not email_raw.empty else pd.DataFrame()
-
-    # Exclude blank-name PMC rows from all analysis.
-    # The PMC file contains rows with no company name that carry aggregated
-    # deposit figures (e.g. $11.71B) representing HOA-level rollups, not
-    # operating PMCs.  These distort concentration, top-PMC, and friction-value
-    # metrics.  The Deposits Rollup on named PMCs is already the correct
-    # consolidated figure (includes underlying HOA deposits + ICS/CDARS).
-    if "_name" in pmc.columns:
-        blank_mask = pmc["_name"].str.strip().eq("")
-        n_blank = blank_mask.sum()
-        if n_blank > 0:
-            log(f"  Excluding {n_blank} blank-name PMC row(s) from analysis")
-            pmc = pmc[~blank_mask].reset_index(drop=True)
 
     master = build_pmc_master(pmc, hoa, cases, emails)
 
