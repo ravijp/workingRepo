@@ -128,6 +128,11 @@ def write_sheet(writer, name, df):
 #  DATA PREPARATION
 # ═══════════════════════════════════════════════════════════
 
+# Module-level col_map storage — pandas loses custom attributes on
+# DataFrame operations (filter, reset_index, copy, merge).  Storing
+# col_maps here guarantees they survive any downstream transformation.
+_COL_MAPS = {}
+
 def prepare_pmc(pmc):
     df = pmc.copy()
     col_map = {
@@ -189,7 +194,7 @@ def prepare_pmc(pmc):
             log(f"  Excluding {blank.sum()} blank-name PMC row(s)")
             df = df[~blank].reset_index(drop=True)
 
-    df._col_map = col_map
+    _COL_MAPS["pmc"] = col_map
     return df
 
 
@@ -219,7 +224,7 @@ def prepare_hoa(hoa):
     if col_map["status"]:
         df["_status"] = df[col_map["status"]].fillna("(blank)").astype(str).str.strip()
 
-    df._col_map = col_map
+    _COL_MAPS["hoa"] = col_map
     return df
 
 
@@ -260,7 +265,7 @@ def prepare_cases_light(cases):
     else:
         df["_is_resolved"] = True
 
-    df._col_map = col_map
+    _COL_MAPS["cases"] = col_map
     return df
 
 
@@ -271,7 +276,7 @@ def prepare_emails_light(emails):
     }
     if col_map["case_number"]:
         df["_case_ref"] = df[col_map["case_number"]].astype(str).str.strip()
-    df._col_map = col_map
+    _COL_MAPS["emails"] = col_map
     return df
 
 
@@ -299,15 +304,15 @@ def build_pmc_master(pmc, hoa, cases, emails):
     if "_rm_checkin_dt" in pmc.columns:
         master["rm_last_checkin"] = pmc["_rm_checkin_dt"]
 
-    col_rm = pmc._col_map.get("rm")
+    col_rm = _COL_MAPS["pmc"].get("rm")
     if col_rm:
         master["relationship_manager"] = pmc[col_rm].fillna("").astype(str)
 
-    col_pod = pmc._col_map.get("pod")
+    col_pod = _COL_MAPS["pmc"].get("pod")
     if col_pod:
         master["pod"] = pmc[col_pod].fillna("").astype(str)
 
-    col_platform = pmc._col_map.get("acct_platform")
+    col_platform = _COL_MAPS["pmc"].get("acct_platform")
     if col_platform:
         master["accounting_platform"] = pmc[col_platform].fillna("").astype(str)
 
@@ -371,7 +376,7 @@ def build_pmc_master(pmc, hoa, cases, emails):
 
         # ── Email counts via case linkage ──
         if not emails.empty and "_case_ref" in emails.columns:
-            case_num_col = cases._col_map.get("case_number")
+            case_num_col = _COL_MAPS["cases"].get("case_number")
             if case_num_col:
                 case_pmc = matched[[case_num_col, "_pmc_id"]].copy()
                 case_pmc[case_num_col] = case_pmc[case_num_col].astype(str)
@@ -699,7 +704,7 @@ def sheet_e07_hierarchy_depth(master, hoa, pmc):
 
 def sheet_e08_platform_mix(pmc, cases):
     """E08: Accounting Platform analysis."""
-    col = pmc._col_map.get("acct_platform")
+    col = _COL_MAPS["pmc"].get("acct_platform")
     if not col:
         return pd.DataFrame({"note": ["Accounting Platform column not found"]})
 
@@ -731,7 +736,7 @@ def sheet_e08_platform_mix(pmc, cases):
 
 def sheet_e09_pod_geography(pmc):
     """E09: Pod-to-state mapping inferred from PMC addresses."""
-    col_pod = pmc._col_map.get("pod")
+    col_pod = _COL_MAPS["pmc"].get("pod")
     if not col_pod or "_state" not in pmc.columns:
         return pd.DataFrame({"note": ["Pod or state column not found"]})
 
