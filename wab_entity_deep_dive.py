@@ -148,24 +148,20 @@ def prepare_pmc(pmc):
         "acct_platform": find_col(df, "Accounting Platform"),
     }
 
-    # Use Deposits Rollup if Est. Total Deposits is too sparse
+    # Always prefer Deposits Rollup — it is the confirmed single source of truth
+    # (consolidated weekly, includes HOA deposits + ICS/CDARS per stakeholder).
+    # Est. Total Deposits may contain stale or aggregated values.
     dep_col = col_map["deposits"]
     dep_roll = col_map["deposits_roll"]
     if dep_col:
         df["_deposits"] = safe_num(df[dep_col])
     if dep_roll:
         df["_deposits_roll"] = safe_num(df[dep_roll])
-        if dep_col:
-            # If Est. Total Deposits is >30% null, prefer Deposits Rollup
-            if df["_deposits"].isna().mean() > 0.3 and df["_deposits_roll"].isna().mean() < df["_deposits"].isna().mean():
-                df["_deposits_best"] = df["_deposits_roll"]
-                log("  Using Deposits Rollup as primary deposit field (lower null rate)")
-            else:
-                df["_deposits_best"] = df["_deposits"]
-        else:
-            df["_deposits_best"] = df["_deposits_roll"]
+        df["_deposits_best"] = df["_deposits_roll"]
+        log("  Using Deposits Rollup as primary deposit field (stakeholder-confirmed source)")
     elif dep_col:
         df["_deposits_best"] = df["_deposits"]
+        log("  WARNING: Deposits Rollup not found, falling back to Est. Total Deposits")
     else:
         df["_deposits_best"] = np.nan
 
@@ -862,6 +858,19 @@ def main():
     hoa    = prepare_hoa(hoa_raw) if not hoa_raw.empty else pd.DataFrame()
     cases  = prepare_cases_light(cases_raw) if not cases_raw.empty else pd.DataFrame()
     emails = prepare_emails_light(email_raw) if not email_raw.empty else pd.DataFrame()
+
+    # Exclude blank-name PMC rows from all analysis.
+    # The PMC file contains rows with no company name that carry aggregated
+    # deposit figures (e.g. $11.71B) representing HOA-level rollups, not
+    # operating PMCs.  These distort concentration, top-PMC, and friction-value
+    # metrics.  The Deposits Rollup on named PMCs is already the correct
+    # consolidated figure (includes underlying HOA deposits + ICS/CDARS).
+    if "_name" in pmc.columns:
+        blank_mask = pmc["_name"].str.strip().eq("")
+        n_blank = blank_mask.sum()
+        if n_blank > 0:
+            log(f"  Excluding {n_blank} blank-name PMC row(s) from analysis")
+            pmc = pmc[~blank_mask].reset_index(drop=True)
 
     master = build_pmc_master(pmc, hoa, cases, emails)
 

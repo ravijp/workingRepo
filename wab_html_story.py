@@ -193,7 +193,7 @@ def render_executive(ctx):
             metric_card("Currently Unresolved", story_lookup(e11, "Cases (3mo)", "client_unresolved"), "5% of client cases"),
             metric_card("Net Backlog Growth", "~130 / week", "Accelerating in recent weeks"),
             metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "Across 1,658 PMCs (Deposits Rollup, includes HOA deposits)"),
-            metric_card("Deposit Concentration", "Top 5 = 56%", "Top 50 PMCs hold 77%"),
+            metric_card("Deposit Concentration", "Moderate", "Top 5 PMCs ~14%; see E01 for full distribution"),
             metric_card("Emails Analyzed (1 day)", story_lookup(e11, "Emails (1day)", "total_emails"), "100% linked to cases"),
         ]
 
@@ -203,9 +203,10 @@ def render_executive(ctx):
         "But the team never fully clears the queue. Each week, roughly 130 more cases are created than resolved, "
         "and that gap is accelerating. Today, 1,809 cases remain unresolved, 540 of them older than 30 days.",
 
-        "This operations load sits on top of a $24 billion deposit book where the top five PMC relationships "
-        "alone account for 56% of total deposits. The concentration means that service friction on even one "
-        "major client is a retention risk, not just an efficiency problem.",
+        "This operations load sits on top of a moderately concentrated deposit book. The top five PMC "
+        "relationships hold roughly 14% of total deposits, and the top twenty account for about a third. "
+        "No single client dominates, but service friction on any of the larger relationships still "
+        "carries retention risk given the cumulative deposit exposure.",
 
         "The good news: the underlying data — cases, emails, PMC records, and HOA linkages — is joinable "
         "at 82–99% match rates, and the email corpus contains enough natural language text to support "
@@ -611,14 +612,15 @@ def render_pmc_portfolio(ctx):
 
     narrative = prose(
         "The operational friction described in previous sections does not carry equal business weight across all "
-        "clients. The HOA deposit book totals approximately $24 billion across 1,658 PMCs, but that value is "
-        "radically concentrated. The top five PMCs alone hold 56% of total deposits. The top fifty hold 77%. "
-        "Meanwhile, 550 PMCs carry less than $1 million each -- a long tail of small accounts that generate "
-        "operational load without proportional economic return.",
+        "clients. The deposit book shows moderate concentration: the top five PMCs hold roughly 14% of "
+        "total deposits, while the top twenty hold about a third. No single PMC dominates — the largest "
+        "(The Management Trust) holds approximately 3.4%. Meanwhile, over 500 PMCs carry less than $1 million "
+        "each, forming a long tail of small accounts that generate operational load without proportional "
+        "economic return.",
 
-        "This concentration changes how friction should be interpreted. A 126-case unresolved backlog at a "
-        "$300-million client is not the same operational problem as 126 unresolved cases at a $50,000 client. "
-        "The former is a retention risk; the latter is a cost question.",
+        "Even at moderate concentration, friction still carries weight. A cluster of unresolved cases at a "
+        "multi-hundred-million-dollar client is a different problem than the same volume at a sub-million "
+        "account. The former is a retention risk; the latter is a cost question.",
 
         "Several findings from the data deserve specific attention. Among the top PMCs by deposit size, some show "
         "signs of operational strain combined with relationship-management gaps. The RM check-in field -- which records "
@@ -640,13 +642,10 @@ def render_pmc_portfolio(ctx):
 
     if not e01.empty:
         parts.append(sub_section("Deposit Distribution",
-            callout("Data Note: Blank Entity",
-                "Deposits Rollup at the PMC level is a consolidated figure that already includes deposits from "
-                "all underlying HOAs (confirmed by stakeholder). The HOA file shows $11.53B in total deposits "
-                "across 73,357 HOAs — this is a subset of the PMC total, not an addition. Do not sum PMC and "
-                "HOA deposits independently.", "info") +
-            p("This table shows the shape of the deposit book. 'pmcs_with_deposits' is how many PMCs have a non-zero "
-              "deposit value recorded. The percentile rows (p25, median, p75, p90) show the spread. "
+            p("This table shows the shape of the deposit book using the Deposits Rollup field — the confirmed "
+              "single source of truth that consolidates all underlying HOA deposits weekly. "
+              "'pmcs_with_deposits' is how many PMCs have a non-zero deposit value recorded. "
+              "The percentile rows (p25, median, p75, p90) show the spread. "
               "The 'TOP N CONCENTRATION' rows show what share of total deposits the largest N PMCs hold.") +
             table(e01, max_rows=25)
         ))
@@ -706,9 +705,9 @@ def render_pmc_portfolio(ctx):
         ))
 
     parts.append(so_what(
-        "The deposit book is a concentration risk. A small number of PMC relationships carry disproportionate "
-        "economic value, and several of the largest show signs of neglect -- stale RM check-ins, high unresolved "
-        "case counts, or both. AI-powered relationship health scoring is a retention play, not just an efficiency play. "
+        "The deposit book is moderately concentrated with a long tail of small accounts. Among the larger PMC "
+        "relationships, several show signs of neglect -- stale RM check-ins, high unresolved case counts, or both. "
+        "AI-powered relationship health scoring is a retention play, not just an efficiency play. "
         "The friction-value quadrant identifies which clients deserve proactive AI investment (High Value / High Friction) "
         "and which may warrant a relationship economics review (Low Value / High Friction)."
     ))
@@ -1373,8 +1372,7 @@ def render_caveats(ctx):
             "Cases: 3-month operating window (December 18, 2025 - March 19, 2026). Not a full annual history. Seasonal patterns cannot be assessed.",
             "Emails: 1-day sample only (March 11, 2026). Communication patterns observed may not generalize across weeks or months.",
             "PMCs and HOAs: Current-state snapshots, not longitudinal entity history. Changes over time cannot be tracked.",
-            "Deposits Rollup at the PMC level already includes all HOA deposits. The HOA file shows $11.53B across 73,357 HOAs — this is a subset of PMC totals, not an addition. Do not sum PMC and HOA deposits independently.",
-            "Deposits Rollup at the PMC level is a consolidated weekly figure that already includes deposits from all underlying HOAs. PMC deposits and HOA deposits must not be summed independently -- that would double-count. The rollup also includes ICS and CDARS balances that may not appear in sub-account detail.",
+            "All deposit figures use Deposits Rollup — a consolidated weekly figure that includes deposits from all underlying HOAs plus ICS/CDARS balances. PMC and HOA deposits must not be summed separately. Blank-name PMC rows (aggregation records) are excluded from all analysis.",
             "Arizona shows negative total deposits (-$53.8M). This is a data quality issue, not an economic signal.",
             "HOA Company Type is 99.1% null -- this field is unusable for analysis.",
             "NAICS codes are mono-valued in both files (73% = 531311 in PMCs, 87% = 813990 in HOAs). NAICS provides no segmentation power and should be treated as a data-quality finding, not an analytical variable.",
