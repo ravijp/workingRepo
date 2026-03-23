@@ -192,7 +192,7 @@ def render_executive(ctx):
             metric_card("Client Cases (3 months)", story_lookup(e11, "Cases (3mo)", "client_cases"), "Dec 2025 - Mar 2026"),
             metric_card("Currently Unresolved", story_lookup(e11, "Cases (3mo)", "client_unresolved"), "5% of client cases"),
             metric_card("Net Backlog Growth", "~130 / week", "Accelerating in recent weeks"),
-            metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "1,658 PMCs; includes one $11.7B blank entity"),
+            metric_card("Total Deposits", story_lookup(e11, "PMC Universe", "total_deposits"), "Across 1,658 PMCs (Deposits Rollup, includes HOA deposits)"),
             metric_card("Deposit Concentration", "Top 5 = 56%", "Top 50 PMCs hold 77%"),
             metric_card("Emails Analyzed (1 day)", story_lookup(e11, "Emails (1day)", "total_emails"), "100% linked to cases"),
         ]
@@ -641,10 +641,10 @@ def render_pmc_portfolio(ctx):
     if not e01.empty:
         parts.append(sub_section("Deposit Distribution",
             callout("Data Note: Blank Entity",
-                "The largest single record in the PMC file carries $11.71B in deposits but has no company name "
-                "and no state. This is likely a parent holding entity or system consolidation record, not an "
-                "operating PMC. It accounts for approximately 48% of the raw deposit total. Concentration "
-                "figures in this table should be interpreted with this in mind.", "warn") +
+                "Deposits Rollup at the PMC level is a consolidated figure that already includes deposits from "
+                "all underlying HOAs (confirmed by stakeholder). The HOA file shows $11.53B in total deposits "
+                "across 73,357 HOAs — this is a subset of the PMC total, not an addition. Do not sum PMC and "
+                "HOA deposits independently.", "info") +
             p("This table shows the shape of the deposit book. 'pmcs_with_deposits' is how many PMCs have a non-zero "
               "deposit value recorded. The percentile rows (p25, median, p75, p90) show the spread. "
               "The 'TOP N CONCENTRATION' rows show what share of total deposits the largest N PMCs hold.") +
@@ -653,8 +653,7 @@ def render_pmc_portfolio(ctx):
 
     if not e02.empty:
         parts.append(sub_section("Top PMCs by Deposits",
-            p("Each row is a named PMC ranked by deposit size. The first row is the blank entity described above -- "
-              "named client analysis begins at the second row. Key columns: 'hoa_count' = number of HOAs managed by "
+            p("Each row is a named PMC ranked by deposit size. Key columns: 'hoa_count' = number of HOAs managed by "
               "this PMC. 'case_count' = total client cases in 3 months. 'unresolved' = cases still open. "
               "'median_hrs' = typical resolution time. 'top_subject' = the most common case type for this PMC. "
               "'pod' = the operational team handling this client. 'relationship_manager' = the assigned RM.") +
@@ -1355,7 +1354,7 @@ def render_next_steps(ctx):
         "Request access to the pre-case email queue data. This queue -- where bankers read emails and decide whether to create cases -- is the upstream triage decision point. Access would enable measurement of conversion rates, decision latency, and the full classify-create-draft-review AI workflow.",
         "Compute the SLA Start to Created On gap across all email-originated client cases. This gap measures the current triage delay and establishes the baseline that any AI triage system must improve against.",
         "Request a longer email extract (1-2 weeks minimum) to validate email-based use cases beyond a single-day sample.",
-        "Investigate the $11.71B blank-entity anomaly and the Arizona negative-deposit data quality issue before presenting deposit figures to leadership.",
+        "Investigate the Arizona negative-deposit data quality issue before presenting deposit figures to leadership.",
         "Lift PMC entity completeness from 30% to 60%+ by prioritizing RM check-in field population and deposit data cleanup.",
     ])
 
@@ -1374,7 +1373,7 @@ def render_caveats(ctx):
             "Cases: 3-month operating window (December 18, 2025 - March 19, 2026). Not a full annual history. Seasonal patterns cannot be assessed.",
             "Emails: 1-day sample only (March 11, 2026). Communication patterns observed may not generalize across weeks or months.",
             "PMCs and HOAs: Current-state snapshots, not longitudinal entity history. Changes over time cannot be tracked.",
-            "An anomalous entity with $11.71 billion in deposits and no company name appears in the PMC file. It is likely a parent/system record and has been flagged wherever it affects concentration figures.",
+            "Deposits Rollup at the PMC level already includes all HOA deposits. The HOA file shows $11.53B across 73,357 HOAs — this is a subset of PMC totals, not an addition. Do not sum PMC and HOA deposits independently.",
             "Deposits Rollup at the PMC level is a consolidated weekly figure that already includes deposits from all underlying HOAs. PMC deposits and HOA deposits must not be summed independently -- that would double-count. The rollup also includes ICS and CDARS balances that may not appear in sub-account detail.",
             "Arizona shows negative total deposits (-$53.8M). This is a data quality issue, not an economic signal.",
             "HOA Company Type is 99.1% null -- this field is unusable for analysis.",
