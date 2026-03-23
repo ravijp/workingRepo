@@ -195,6 +195,7 @@ def prepare_pmc(pmc):
             df = df[~blank].reset_index(drop=True)
 
     _COL_MAPS["pmc"] = col_map
+    log(f"  _COL_MAPS keys after prepare_pmc: {list(_COL_MAPS.keys())}")
     return df
 
 
@@ -304,15 +305,15 @@ def build_pmc_master(pmc, hoa, cases, emails):
     if "_rm_checkin_dt" in pmc.columns:
         master["rm_last_checkin"] = pmc["_rm_checkin_dt"]
 
-    col_rm = _COL_MAPS["pmc"].get("rm")
+    col_rm = _COL_MAPS.get("pmc", {}).get("rm")
     if col_rm:
         master["relationship_manager"] = pmc[col_rm].fillna("").astype(str)
 
-    col_pod = _COL_MAPS["pmc"].get("pod")
+    col_pod = _COL_MAPS.get("pmc", {}).get("pod")
     if col_pod:
         master["pod"] = pmc[col_pod].fillna("").astype(str)
 
-    col_platform = _COL_MAPS["pmc"].get("acct_platform")
+    col_platform = _COL_MAPS.get("pmc", {}).get("acct_platform")
     if col_platform:
         master["accounting_platform"] = pmc[col_platform].fillna("").astype(str)
 
@@ -376,7 +377,7 @@ def build_pmc_master(pmc, hoa, cases, emails):
 
         # ── Email counts via case linkage ──
         if not emails.empty and "_case_ref" in emails.columns:
-            case_num_col = _COL_MAPS["cases"].get("case_number")
+            case_num_col = _COL_MAPS.get("cases", {}).get("case_number")
             if case_num_col:
                 case_pmc = matched[[case_num_col, "_pmc_id"]].copy()
                 case_pmc[case_num_col] = case_pmc[case_num_col].astype(str)
@@ -704,7 +705,7 @@ def sheet_e07_hierarchy_depth(master, hoa, pmc):
 
 def sheet_e08_platform_mix(pmc, cases):
     """E08: Accounting Platform analysis."""
-    col = _COL_MAPS["pmc"].get("acct_platform")
+    col = _COL_MAPS.get("pmc", {}).get("acct_platform")
     if not col:
         return pd.DataFrame({"note": ["Accounting Platform column not found"]})
 
@@ -736,7 +737,7 @@ def sheet_e08_platform_mix(pmc, cases):
 
 def sheet_e09_pod_geography(pmc):
     """E09: Pod-to-state mapping inferred from PMC addresses."""
-    col_pod = _COL_MAPS["pmc"].get("pod")
+    col_pod = _COL_MAPS.get("pmc", {}).get("pod")
     if not col_pod or "_state" not in pmc.columns:
         return pd.DataFrame({"note": ["Pod or state column not found"]})
 
