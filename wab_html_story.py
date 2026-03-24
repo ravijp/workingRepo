@@ -342,81 +342,107 @@ def render_subject_friction(ctx):
 
     parts = [pop_note, narrative, tiers]
 
-    # ── Banker-Hours Budget (D17) — the ROI table ──
-    if d17 is not None and not d17.empty:
-        parts.append(sub_section("Banker-Hours Budget by Subject",
-            p("This table shows estimated banker-hours consumed per week by each major subject. "
-              "'hours_type' distinguishes WORK TIME (recoverable through automation) from WAIT TIME "
-              "(calendar wait, e.g. CD maturity). 'est_recoverable_hrs_per_week' applies a conservative "
-              "60% factor to work-time subjects — the hours that AI or automation could realistically return.") +
-            table(d17, max_rows=27)
+    # ── Subject-Level Detail (D03) — the familiar landscape ──
+    if d03 is not None and not d03.empty:
+        parts.append(sub_section("Subject-Level Detail",
+            p("The table below shows the top 15 case subjects ranked by volume. The median and P90 resolution "
+              "hours reveal the tier structure described above. Description and Activity Subject fill rates "
+              "indicate how much text is available for AI to work with — critical for feasibility assessment.") +
+            table(d03, max_rows=18)
         ))
 
-    # ── Claim Check (D18) — Chris's assertions tested ──
-    if d18 is not None and not d18.empty:
-        parts.append(sub_section("Operational Context: Stakeholder Claims vs Data",
-            p("During the March 23 working session, operational leadership provided context on several "
-              "key subjects. The table below tests each claim against the data. Verdicts: CONFIRMED means "
-              "the data strongly supports the claim; PARTIALLY CONFIRMED means directionally correct but "
-              "with nuance.") +
-            table(d18, max_rows=10)
+    # ── SLA Breach Profile (D06) ──
+    if d06 is not None and not d06.empty:
+        parts.append(sub_section("SLA Breach Profile",
+            p("What share of cases in each subject exceed key time thresholds? Subjects where a large fraction "
+              "exceeds 72 or 168 hours (one week) are the ones with structural delays, not occasional outliers. "
+              "This separates genuine friction from by-design wait times.") +
+            table(d06, max_rows=15)
         ))
 
-    # ── Research Breakdown (D19) ──
+    # ── Research Breakdown (D19) — first new insight, flows from tier narrative ──
     if d19 is not None and not d19.empty:
         parts.append(sub_section("Research: Not One Workflow, but Five",
-            p("Research is the largest single case subject at 4,073 cases, and stakeholders confirmed it is "
-              "a catch-all. Keyword classification of Description and Activity Subject text reveals five "
-              "distinct sub-types. Payment Research dominates at roughly 40%. The large 'Other/Uncategorized' "
-              "share reflects low Description fill (37%) — automated sub-routing will require email body text, "
-              "not just CRM fields. This is itself a finding: the current taxonomy obscures workload composition.") +
+            prose(
+                "Research is the largest single case subject at over 4,000 cases, and stakeholders confirmed "
+                "it is a catch-all — 'a lot of different things go into it.' Keyword classification of "
+                "Description and Activity Subject text reveals five distinct sub-types. Payment Research "
+                "dominates at roughly 40%, followed by Check/Item Research and Statement/Balance Inquiry.",
+
+                "The large 'Other/Uncategorized' share reflects low Description fill (37%). This is itself "
+                "a finding: automated sub-routing of Research cases will require email body text, not just "
+                "CRM fields. The current taxonomy obscures workload composition, making it harder to assign "
+                "the right banker to the right case.",
+            ) +
             table(d19, max_rows=8)
+        ))
+
+    # ── Claim Check (D18) — operational context grounded in data ──
+    if d18 is not None and not d18.empty:
+        parts.append(sub_section("Operational Context: Stakeholder Claims vs Data",
+            prose(
+                "During the March 23 working session, operational leadership provided specific context on "
+                "several key subjects. Rather than take these characterizations at face value, we tested each "
+                "claim against the case data. The verdicts below ground the subsequent cost analysis in "
+                "confirmed operational reality, not assumptions.",
+            ) +
+            table(d18, max_rows=10)
         ))
 
     # ── Key-Person Risk (D20) ──
     if d20 is not None and not d20.empty:
-        # Filter to only YES risks for the narrative
-        spof_yes = d20[d20.get("risk_level", pd.Series(dtype=str)) == "YES"] if "risk_level" in d20.columns else d20
-        n_spof = len(spof_yes) if not spof_yes.empty else 0
+        spof_yes = d20[d20["risk_level"] == "YES"] if "risk_level" in d20.columns else pd.DataFrame()
+        n_spof = len(spof_yes)
         parts.append(sub_section("Key-Person Risk",
-            p(f"{n_spof} subjects have a single banker handling more than 50% of all cases. "
-              "If any of these individuals were unavailable — vacation, attrition, reassignment — "
-              "hundreds to thousands of cases would need redistribution with no established backup. "
-              "This table shows all subjects where a single owner exceeds 35% of volume.") +
+            prose(
+                f"Across the case portfolio, {n_spof} subjects have a single banker handling more than half "
+                "of all cases. This concentration creates operational fragility independent of any AI deployment "
+                "decision. If any of these individuals were unavailable — vacation, attrition, reassignment — "
+                "hundreds to thousands of cases would need redistribution with no established backup workflow.",
+
+                "The speed comparison column reveals an additional dimension: in several cases, the dominant "
+                "owner is faster than peers, meaning reassignment would not only disrupt continuity but "
+                "also reduce throughput. Cross-training is the minimum intervention.",
+            ) +
             table(d20, max_rows=20)
         ))
 
     # ── Mixed-Type Flags (D21) ──
     if d21 is not None and not d21.empty:
-        parts.append(sub_section("Mixed-Type Subjects (Hidden Sub-Workflows)",
-            p("These subjects show P90/median resolution time ratios above 5×, indicating that multiple "
-              "distinct workflows are hiding under a single label. For example, a subject with a 3-hour median "
-              "but a 300-hour P90 likely contains both quick-resolve and multi-day cases. "
-              "These are candidates for subject taxonomy revision or sub-segmentation.") +
+        parts.append(sub_section("Mixed-Type Subjects",
+            p("These subjects show P90/median resolution time ratios above 5×, indicating multiple "
+              "distinct workflows hiding under a single label. A subject with a 3-hour median but a "
+              "300-hour P90 likely contains both quick-resolve and multi-day cases. These are candidates "
+              "for subject taxonomy revision — splitting them would sharpen both reporting and routing.") +
             table(d21, max_rows=15)
         ))
 
-    # ── Original detail tables ──
-    if d03 is not None and not d03.empty:
-        parts.append(sub_section("Subject-Level Detail (Reference)",
-            p("Top 15 case subjects ranked by volume with resolution profile, text fill rates, "
-              "and unresolved percentage.") +
-            table(d03, max_rows=18)
-        ))
+    # ── Banker-Hours Budget (D17) — capstone: what does this all cost? ──
+    if d17 is not None and not d17.empty:
+        parts.append(sub_section("What This Costs: Banker-Hours Budget",
+            prose(
+                "With the landscape established — which subjects are fast, which are slow by design, where the "
+                "key-person risks live, and what Research actually contains — we can quantify the operational cost. "
+                "The table below estimates banker-hours consumed per week by each major subject.",
 
-    if d06 is not None and not d06.empty:
-        parts.append(sub_section("SLA Breach Profile (Reference)",
-            p("Percentage of cases exceeding 24h, 72h, and 168h thresholds by subject.") +
-            table(d06, max_rows=15)
+                "The 'hours_type' column distinguishes WORK TIME (recoverable through automation or AI) from "
+                "WAIT TIME (calendar wait for CD maturity or IntraFi processing — not addressable by speed "
+                "optimization). The 'est_recoverable_hrs_per_week' applies a conservative 60% factor to "
+                "work-time subjects. This is the pool of hours that AI intervention could realistically return "
+                "to the operation.",
+            ) +
+            table(d17, max_rows=27)
         ))
 
     parts.append(so_what(
-        "The banker-hours budget is the investment case. Signature Card alone consumes the most hours but is "
-        "a process redesign target, not an AI target. The AI sweet spot is the fat-tail tier (Research, New Account, "
-        "Account Maintenance) where early complexity detection saves the most recoverable hours. "
-        "Key-person risk on 9+ subjects demands cross-training regardless of AI deployment. "
-        "Research sub-segmentation shows the catch-all can be broken into 5 routable types — "
-        "but requires email body text, not just CRM fields."
+        "The subject landscape separates into four action categories. AUTOMATE targets (NSF, Fraud Alert, Transfer) "
+        "are already fast and need rules-based throughput. AI-ASSIST targets (Research, New Account, Account "
+        "Maintenance) are the fat-tail subjects where early complexity detection saves the most recoverable hours. "
+        "REDESIGN targets (Signature Card, Close Account) need process changes before AI adds value. "
+        "MONITOR targets (CD Maintenance, IntraFi) are slow by design — their hours are wait time, not work time. "
+        "Key-person concentration on 9+ subjects demands cross-training regardless of AI deployment. "
+        "Research sub-segmentation confirms the catch-all can be broken into 5 routable types, "
+        "but will require email body text for automated classification."
     ))
 
     return "".join(parts)

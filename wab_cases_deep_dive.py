@@ -229,11 +229,17 @@ def prepare_cases(cases):
         now = pd.Timestamp.now()
         df["_age_hours"] = (now - df["_created_on_dt"]).dt.total_seconds() / 3600
 
-    # ── Derived: text lengths ──
+    # ── Derived: owner clean ──
+    src_own = col_map.get("owner")
+    if src_own:
+        df["_owner"] = df[src_own].fillna("(blank)").astype(str).str.strip()
+
+    # ── Derived: text lengths + text content ──
     for key in ["description", "activity_subj"]:
         src = col_map.get(key)
         if src:
             df[f"_{key}_len"] = df[src].fillna("").astype(str).str.len()
+            df[f"_{key}_text"] = df[src].fillna("").astype(str).str.strip()
 
     df._col_map = col_map
     return df
