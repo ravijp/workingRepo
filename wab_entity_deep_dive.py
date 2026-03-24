@@ -246,9 +246,12 @@ def prepare_cases_light(cases):
     if col_map["company"]:
         df["_company"] = df[col_map["company"]].fillna("(blank)").astype(str).str.strip()
         df["_company_norm"] = df["_company"].apply(norm_key)
-        df["_is_internal"] = df["_company"].str.upper().apply(
-            lambda x: any(x.startswith(kw) for kw in INTERNAL_COMPANIES) or x == "(BLANK)"
-        )
+        _upper = df["_company"].str.upper()
+        df["_is_admin"] = _upper.apply(lambda x: any(x.startswith(kw) for kw in INTERNAL_COMPANIES))
+        df["_is_blank_company"] = (_upper == "(BLANK)") | (df["_company"] == "")
+        # Entity analysis: _is_internal = admin only (blank clients included in ops totals)
+        # BUT for PMC-linked metrics, blank cases are excluded since they can't join
+        df["_is_internal"] = df["_is_admin"]
     else:
         df["_is_internal"] = False
 

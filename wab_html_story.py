@@ -198,10 +198,11 @@ def render_executive(ctx):
         ]
 
     narrative = prose(
-        "Over the past three months, the HOA operations team processed 36,296 client-facing cases. "
+        "Over the past three months, the HOA operations team processed approximately 38,500 client-facing cases "
+        "(36,296 with named companies plus ~2,200 blank-company cases confirmed as genuine client emails). "
         "That volume is manageable on a daily basis — most cases resolve in under five hours. "
         "But the team never fully clears the queue. Each week, roughly 130 more cases are created than resolved, "
-        "and that gap is accelerating. Today, 1,809 cases remain unresolved, 540 of them older than 30 days.",
+        "and that gap is accelerating.",
 
         "This operations load sits on top of a moderately concentrated deposit book. The top five PMC "
         "relationships hold roughly 14% of total deposits, and the top twenty account for about a third. "
@@ -290,74 +291,132 @@ def render_case_volume(ctx):
 def render_subject_friction(ctx):
     d03 = ctx.cases.get("D03_SubjectDeep")
     d06 = ctx.cases.get("D06_SLA_Breach")
+    d17 = ctx.cases.get("D17_BankerHoursBudget")
+    d18 = ctx.cases.get("D18_ClaimCheck")
+    d19 = ctx.cases.get("D19_ResearchBreakdown")
+    d20 = ctx.cases.get("D20_KeyPersonRisk")
+    d21 = ctx.cases.get("D21_MixedTypeFlags")
 
+    # ── Population callout ──
+    pop_note = callout("Population Note",
+        "This analysis uses an inclusive client population: named-company cases plus blank-company cases. "
+        "Validation confirmed that blank-company cases are genuine client emails where CRM did not assign "
+        "a company name (99.8% email-originated, 100% banker/pod overlap with named clients, similar "
+        "resolution profile). Only AAB ADMIN / WAB ADMIN cases are excluded as admin/multi-client.", "info")
+
+    # ── Tier narrative ──
     narrative = prose(
-        "Not all case types behave the same way, and this distinction matters for deciding where AI intervention "
-        "would have the highest return. When we break the 36,296 client cases down by subject -- the operational "
-        "category assigned to each case -- three distinct tiers emerge. Stakeholder confirmation: the Subject field "
-        "is selected by the banker from a curated pick list at case creation time. The 214 distinct values represent "
-        "a managed operational taxonomy, not freeform text. This is valuable for supervised classification -- a model "
-        "can learn from human-assigned labels -- but it also means some noise exists when bankers select the "
-        "closest-available match rather than an exact fit.",
+        "Not all case types behave the same way, and this distinction matters for deciding where to intervene. "
+        "The Subject field is a banker-selected pick list (214 distinct values) — a managed operational taxonomy. "
+        "When we break cases down by subject, three distinct tiers emerge, each requiring a different intervention.",
 
-        "The first tier is fast and clean. NSF and Non-Post cases, for example, resolve in a median of 1.5 hours "
+        "The first tier is fast and clean. NSF and Non-Post cases resolve in a median of 1.5 hours "
         "with virtually no unresolved tail (0.2%). Fraud Alert and Transfer follow a similar pattern. These "
-        "categories are already well-machined; AI adds marginal value here beyond possible straight-through automation.",
+        "are already efficient — rules-based automation is the right tool, not AI.",
 
         "The second tier is where the GenAI opportunity concentrates. Research cases (4,073 in three months) "
-        "resolve in a median of 3.8 hours — which looks fast — but the 90th percentile stretches to 107 hours "
-        "and the maximum reaches 7,629 hours. Account Maintenance shows a similar pattern: 3.6-hour median "
-        "but a 317-hour P90. These are 'fat-tail' subjects where most cases resolve quickly, but a meaningful "
-        "minority drags for days or weeks. An AI model that identifies which cases are about to enter the tail — "
-        "even a few hours earlier than a human would notice — could redirect attention before the backlog compounds.",
+        "resolve in a median of 3.8 hours, but the 90th percentile stretches to 107 hours. Account Maintenance "
+        "shows a similar pattern: 3.6-hour median but a 317-hour P90. These 'fat-tail' subjects are where early "
+        "identification of complexity saves the most hours.",
 
         "The third tier is structurally slow. Signature Card cases take a median of 155 hours — over six business "
-        "days — and 49% exceed one full week. CD Maintenance and IntraFi Maintenance follow at 98 and 91 hours "
-        "respectively. These are not speed problems that AI can solve. They are process design problems where "
-        "the underlying workflow takes days by nature. AI can support these categories (missing-info detection, "
-        "workflow nudging), but the primary intervention is process redesign.",
+        "days — and 49% exceed one full week. CD Maintenance sits at 98 hours, but stakeholder confirmation (Chris, "
+        "March 23) clarified this is by design: bankers wait for CD maturity dates, not processing friction. "
+        "These need process redesign, not speed optimization.",
     )
 
     tiers = (
-        callout("Tier 1 — Fast / Clean",
-                "NSF and Non-Post (1.5h median, 0.2% unresolved), Fraud Alert (2.6h), Transfer (1.3h), "
-                "Statements (1.5h). Already efficient. Automation target, not AI target.", "info") +
-        callout("Tier 2 — Fat Tail (GenAI sweet spot)",
-                "Research (3.8h median, P90 107h), New Account Request (25h median, P90 190h), "
-                "Account Maintenance (3.6h median, P90 317h). Fast on average, but a significant minority "
-                "of cases drag for days or weeks. Escalation detection and triage add the most value here.", "warn") +
-        callout("Tier 3 — Structurally Slow",
-                "Signature Card (155h median, 49% exceed 1 week), CD Maintenance (98h, 10.2% unresolved), "
-                "IntraFi Maintenance (91h, 8.8%). These need process redesign first, AI support second.", "err")
+        callout("AUTOMATE — Fast / Clean",
+                "NSF and Non-Post (1.5h median), Fraud Alert (2.6h), Transfer (1.3h). "
+                "Already efficient. Rules-based automation target.", "info") +
+        callout("AI-ASSIST — Fat Tail (GenAI sweet spot)",
+                "Research (3.8h median, P90 107h), New Account Request (25h, P90 190h), "
+                "Account Maintenance (3.6h, P90 317h). AI triage, draft reply, and escalation detection.", "warn") +
+        callout("REDESIGN — Structurally Slow",
+                "Signature Card (155h median, 49% &gt; 1 week), Close Account (23h, P90 338h). "
+                "Process redesign first. AI support second.", "err") +
+        callout("MONITOR — By Design",
+                "CD Maintenance (98h — maturity wait, not friction), IntraFi Maintenance (91h). "
+                "Hours consumed are wait time, not work time. Exclude from automation ROI.", "info")
     )
 
-    parts = [narrative, tiers]
+    parts = [pop_note, narrative, tiers]
 
-    if not d03.empty:
-        parts.append(sub_section("Subject-Level Detail",
-            p("This table shows the top 15 case subjects ranked by volume. Key columns: "
-              "'median_hrs' is the time by which half of cases are resolved. "
-              "'p90_hrs' is the time by which 90% are resolved — the remaining 10% take longer than this. "
-              "'pct_unresolved' is the share of cases still open as of the extract date. "
-              "'desc_fill_pct' and 'act_subj_fill_pct' show what percentage of cases in that subject "
-              "have text in the Description and Activity Subject fields — critical for GenAI feasibility.") +
+    # ── Banker-Hours Budget (D17) — the ROI table ──
+    if d17 is not None and not d17.empty:
+        parts.append(sub_section("Banker-Hours Budget by Subject",
+            p("This table shows estimated banker-hours consumed per week by each major subject. "
+              "'hours_type' distinguishes WORK TIME (recoverable through automation) from WAIT TIME "
+              "(calendar wait, e.g. CD maturity). 'est_recoverable_hrs_per_week' applies a conservative "
+              "60% factor to work-time subjects — the hours that AI or automation could realistically return.") +
+            table(d17, max_rows=27)
+        ))
+
+    # ── Claim Check (D18) — Chris's assertions tested ──
+    if d18 is not None and not d18.empty:
+        parts.append(sub_section("Operational Context: Stakeholder Claims vs Data",
+            p("During the March 23 working session, operational leadership provided context on several "
+              "key subjects. The table below tests each claim against the data. Verdicts: CONFIRMED means "
+              "the data strongly supports the claim; PARTIALLY CONFIRMED means directionally correct but "
+              "with nuance.") +
+            table(d18, max_rows=10)
+        ))
+
+    # ── Research Breakdown (D19) ──
+    if d19 is not None and not d19.empty:
+        parts.append(sub_section("Research: Not One Workflow, but Five",
+            p("Research is the largest single case subject at 4,073 cases, and stakeholders confirmed it is "
+              "a catch-all. Keyword classification of Description and Activity Subject text reveals five "
+              "distinct sub-types. Payment Research dominates at roughly 40%. The large 'Other/Uncategorized' "
+              "share reflects low Description fill (37%) — automated sub-routing will require email body text, "
+              "not just CRM fields. This is itself a finding: the current taxonomy obscures workload composition.") +
+            table(d19, max_rows=8)
+        ))
+
+    # ── Key-Person Risk (D20) ──
+    if d20 is not None and not d20.empty:
+        # Filter to only YES risks for the narrative
+        spof_yes = d20[d20.get("risk_level", pd.Series(dtype=str)) == "YES"] if "risk_level" in d20.columns else d20
+        n_spof = len(spof_yes) if not spof_yes.empty else 0
+        parts.append(sub_section("Key-Person Risk",
+            p(f"{n_spof} subjects have a single banker handling more than 50% of all cases. "
+              "If any of these individuals were unavailable — vacation, attrition, reassignment — "
+              "hundreds to thousands of cases would need redistribution with no established backup. "
+              "This table shows all subjects where a single owner exceeds 35% of volume.") +
+            table(d20, max_rows=20)
+        ))
+
+    # ── Mixed-Type Flags (D21) ──
+    if d21 is not None and not d21.empty:
+        parts.append(sub_section("Mixed-Type Subjects (Hidden Sub-Workflows)",
+            p("These subjects show P90/median resolution time ratios above 5×, indicating that multiple "
+              "distinct workflows are hiding under a single label. For example, a subject with a 3-hour median "
+              "but a 300-hour P90 likely contains both quick-resolve and multi-day cases. "
+              "These are candidates for subject taxonomy revision or sub-segmentation.") +
+            table(d21, max_rows=15)
+        ))
+
+    # ── Original detail tables ──
+    if d03 is not None and not d03.empty:
+        parts.append(sub_section("Subject-Level Detail (Reference)",
+            p("Top 15 case subjects ranked by volume with resolution profile, text fill rates, "
+              "and unresolved percentage.") +
             table(d03, max_rows=18)
         ))
 
-    if not d06.empty:
-        parts.append(sub_section("SLA Breach Profile",
-            p("This table shows what percentage of cases in each subject exceed various time thresholds. "
-              "For example, '>24h_pct' is the share of cases that took more than 24 hours to resolve. "
-              "Subjects where a large fraction exceeds 72 or 168 hours (one week) are the ones with "
-              "structural process delays, not just occasional outliers.") +
+    if d06 is not None and not d06.empty:
+        parts.append(sub_section("SLA Breach Profile (Reference)",
+            p("Percentage of cases exceeding 24h, 72h, and 168h thresholds by subject.") +
             table(d06, max_rows=15)
         ))
 
     parts.append(so_what(
-        "AI should target the fat-tail tier (Tier 2), where early identification of complexity saves the most hours. "
-        "Tier 1 is already fast — rules and automation are the right tool. "
-        "Tier 3 needs process redesign; deploying AI against a fundamentally slow workflow "
-        "would optimize the wrong thing."
+        "The banker-hours budget is the investment case. Signature Card alone consumes the most hours but is "
+        "a process redesign target, not an AI target. The AI sweet spot is the fat-tail tier (Research, New Account, "
+        "Account Maintenance) where early complexity detection saves the most recoverable hours. "
+        "Key-person risk on 9+ subjects demands cross-training regardless of AI deployment. "
+        "Research sub-segmentation shows the catch-all can be broken into 5 routable types — "
+        "but requires email body text, not just CRM fields."
     ))
 
     return "".join(parts)

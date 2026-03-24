@@ -312,8 +312,11 @@ def prepare_cases(cases):
 
     if col_map["company"]:
         df["_company"] = df[col_map["company"]].fillna("(blank)").astype(str).str.strip()
-        df["_is_internal"] = df["_company"].str.upper().apply(
-            lambda x: any(x.startswith(k) for k in INTERNAL_COMPANIES) or x == "(BLANK)")
+        _upper = df["_company"].str.upper()
+        df["_is_admin"] = _upper.apply(lambda x: any(x.startswith(k) for k in INTERNAL_COMPANIES))
+        df["_is_blank_company"] = (_upper == "(BLANK)") | (df["_company"] == "")
+        # Blank-company cases are client emails (confirmed by validation)
+        df["_is_internal"] = df["_is_admin"]
     else:
         df["_company"] = "(blank)"
         df["_is_internal"] = False
