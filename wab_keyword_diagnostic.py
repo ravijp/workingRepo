@@ -1,63 +1,36 @@
 """
-WAB Keyword Diagnostic — What's Actually in the Text Fields
-=============================================================
-Run FIRST before defining sub-segmentation clusters.
-Dumps top keywords from Description + Activity Subject for each major subject.
-Also shows bigrams (2-word phrases) which are more informative than single words.
+WAB Keyword Diagnostic — Compact View
+=======================================
+Produces ONE sheet with all 5 subjects side by side.
+3 screenshots max to share the full picture.
 
-Output: one Excel workbook with one sheet per subject.
+Dependencies: pandas, openpyxl
 """
 
 # ┌─────────────────────────────────────────────────────────┐
-# │  EDIT THESE 2 VARIABLES BEFORE RUNNING                  │
-# └─────────────────────────────────────────────────────────┘
 CASE_FILE  = r"C:\Users\YourName\Desktop\AAB All Cases.xlsx"
 OUTPUT_DIR = r"C:\Users\YourName\Desktop\wab_output"
-# ┌─────────────────────────────────────────────────────────┐
-# │  DO NOT EDIT BELOW THIS LINE                            │
 # └─────────────────────────────────────────────────────────┘
 
 import os, re, datetime, warnings
 from collections import Counter, OrderedDict
-
-import pandas as pd
-import numpy as np
+import pandas as pd, numpy as np
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 OUTPUT_XLSX = os.path.join(OUTPUT_DIR, "wab_keyword_diagnostic.xlsx")
 ADMIN_PREFIXES = {"AAB ADMIN", "WAB ADMIN", "AAB ADMIN -", "WAB ADMIN -"}
 
-def norm_col(name):
-    if not isinstance(name, str): return ""
-    return re.sub(r"\s+", " ", name.strip().lower())
-
-def find_col(df, *candidates):
-    lookup = {norm_col(c): c for c in df.columns}
-    for cand in candidates:
-        normed = norm_col(cand)
-        if normed in lookup: return lookup[normed]
-    for cand in candidates:
-        normed = norm_col(cand)
-        for k, v in lookup.items():
-            if normed in k or k in normed: return v
+def find_col(df, *c):
+    lookup = {re.sub(r"\s+"," ",str(x).strip().lower()): x for x in df.columns}
+    for cand in c:
+        n = re.sub(r"\s+"," ",cand.strip().lower())
+        if n in lookup: return lookup[n]
+    for cand in c:
+        n = re.sub(r"\s+"," ",cand.strip().lower())
+        for k,v in lookup.items():
+            if n in k or k in n: return v
     return None
 
-def safe_num(s):
-    if pd.api.types.is_numeric_dtype(s): return s
-    return pd.to_numeric(s, errors="coerce")
-
-def write_sheet(writer, name, df):
-    if df is None or df.empty:
-        df = pd.DataFrame({"note": ["No data"]})
-    sn = name[:31]
-    df.to_excel(writer, sheet_name=sn, index=False, freeze_panes=(1, 0))
-    ws = writer.sheets[sn]
-    for col_cells in ws.columns:
-        mx = max(len(str(cell.value or "")) for cell in col_cells)
-        ws.column_dimensions[col_cells[0].column_letter].width = min(mx + 3, 60)
-
-
-# Noise words to exclude — broader than usual to surface domain-specific terms
 STOP = {
     "the","and","for","that","this","with","from","your","have","are",
     "was","were","been","has","had","but","not","you","all","can",
@@ -66,173 +39,150 @@ STOP = {
     "via","please","thank","thanks","hello","dear","regards","sincerely",
     "sent","received","fyi","following","below","above","let","its",
     "who","how","when","where","what","why","any","each","more","some",
-    "very","been","being","other","only","same","than","then","there",
+    "very","being","other","only","same","than","then","there",
     "these","those","such","both","does","doing","done","did","make",
     "made","take","took","give","gave","like","know","see","way",
-    "will","one","two","new","now","use","used","using","set",
-    # Email/security banner noise
+    "one","two","new","now","use","used","using","set","said",
     "external","message","caution","originated","outside","organization",
     "click","links","open","attachments","unless","recognize","sender",
     "safe","content","secure","proofpoint","encrypted","https","http","www",
-    "com","org","net",
+    "com","org","net","subject","mailto",
 }
 
+def bigrams(texts, top_n=25):
+    bg = Counter()
+    for t in texts:
+        if not t or len(str(t)) < 5: continue
+        words = [w for w in re.findall(r"[a-z][a-z0-9]{2,}", str(t).lower()) if w not in STOP]
+        for i in range(len(words)-1):
+            bg[f"{words[i]} {words[i+1]}"] += 1
+    return bg.most_common(top_n)
 
-def extract_unigrams(texts, top_n=50):
-    """Top single words, excluding stop words."""
-    words = Counter()
+def unigrams(texts, top_n=25):
+    ug = Counter()
     for t in texts:
         if not t or len(str(t)) < 3: continue
         for w in re.findall(r"[a-z][a-z0-9]{2,}", str(t).lower()):
-            if w not in STOP:
-                words[w] += 1
-    return words.most_common(top_n)
+            if w not in STOP: ug[w] += 1
+    return ug.most_common(top_n)
 
-
-def extract_bigrams(texts, top_n=40):
-    """Top 2-word phrases — much more informative than single words."""
-    bigrams = Counter()
+def act_subj_phrases(texts, top_n=20):
+    ph = Counter()
     for t in texts:
         if not t or len(str(t)) < 5: continue
-        words = re.findall(r"[a-z][a-z0-9]{2,}", str(t).lower())
-        words = [w for w in words if w not in STOP]
-        for i in range(len(words) - 1):
-            bg = f"{words[i]} {words[i+1]}"
-            bigrams[bg] += 1
-    return bigrams.most_common(top_n)
+        c = re.sub(r"^(re|fw|fwd)\s*:\s*","", str(t).strip().lower(), flags=re.IGNORECASE).strip()
+        if len(c) > 3: ph[c[:80]] += 1
+    return ph.most_common(top_n)
 
-
-def extract_from_act_subj_only(texts, top_n=40):
-    """Top phrases from Activity Subject only (shorter, more structured)."""
-    phrases = Counter()
-    for t in texts:
-        if not t or len(str(t)) < 5: continue
-        # Normalize and count the full activity subject as a phrase
-        clean = re.sub(r"\s+", " ", str(t).strip().lower())
-        # Remove RE: FW: prefixes
-        clean = re.sub(r"^(re|fw|fwd)\s*:\s*", "", clean).strip()
-        if len(clean) > 3:
-            phrases[clean] += 1
-    return phrases.most_common(top_n)
-
+def write_sheet(writer, name, df):
+    sn = name[:31]
+    df.to_excel(writer, sheet_name=sn, index=False, freeze_panes=(1,0))
+    ws = writer.sheets[sn]
+    for col_cells in ws.columns:
+        mx = max(len(str(cell.value or "")) for cell in col_cells)
+        ws.column_dimensions[col_cells[0].column_letter].width = min(mx+2, 45)
 
 def main():
-    start = datetime.datetime.now()
-    print(f"=== Keyword Diagnostic — {start.strftime('%Y-%m-%d %H:%M')} ===\n")
+    print(f"=== Keyword Diagnostic ===\n")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     df = pd.read_excel(CASE_FILE, header=0, engine="openpyxl")
-    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
-    df = df.dropna(axis=1, how="all")
-    print(f"  Cases: {len(df):,}")
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")].dropna(axis=1, how="all")
 
-    co_col = find_col(df, "Company Name (Company) (Company)", "Company Name", "Customer")
+    co_col = find_col(df, "Company Name (Company) (Company)", "Company Name")
     subj_col = find_col(df, "Subject")
     desc_col = find_col(df, "Description")
     act_col = find_col(df, "Activity Subject")
-    hrs_col = find_col(df, "Resolved In Hours")
 
-    df["_company"] = df[co_col].fillna("").astype(str).str.strip() if co_col else ""
-    _upper = df["_company"].str.upper()
-    df["_is_internal"] = _upper.apply(lambda x: any(x.startswith(p) for p in ADMIN_PREFIXES))
-    df["_subject"] = df[subj_col].fillna("(blank)").astype(str).str.strip() if subj_col else ""
+    df["_co"] = df[co_col].fillna("").astype(str).str.strip() if co_col else ""
+    df["_is_internal"] = df["_co"].str.upper().apply(lambda x: any(x.startswith(p) for p in ADMIN_PREFIXES))
+    df["_subj"] = df[subj_col].fillna("").astype(str).str.strip() if subj_col else ""
     df["_desc"] = df[desc_col].fillna("").astype(str).str.strip() if desc_col else ""
-    df["_act_subj"] = df[act_col].fillna("").astype(str).str.strip() if act_col else ""
-    df["_hours"] = safe_num(df[hrs_col]) if hrs_col else np.nan
+    df["_act"] = df[act_col].fillna("").astype(str).str.strip() if act_col else ""
 
-    client = df[~df["_is_internal"]].copy()
-    print(f"  Client inclusive: {len(client):,}\n")
-
-    # Target subjects for sub-segmentation
+    client = df[~df["_is_internal"]]
     targets = ["Research", "Account Maintenance", "New Account Request",
                "General Questions", "Close Account"]
 
-    sheets = OrderedDict()
-
+    # ── Sheet 1: Bigrams side by side (most informative) ──
+    max_rows = 25
+    bg_data = {}
     for subj in targets:
-        s = client[client["_subject"] == subj]
-        n = len(s)
-        if n == 0:
-            continue
+        s = client[client["_subj"] == subj]
+        texts = s[s["_desc"].str.len() > 0]["_desc"].tolist() + s[s["_act"].str.len() > 5]["_act"].tolist()
+        bg = bigrams(texts, max_rows)
+        bg_data[subj] = bg
+        print(f"  {subj}: {len(s):,} cases, {len(texts):,} texts")
 
-        desc_texts = s[s["_desc"].str.len() > 0]["_desc"].tolist()
-        act_texts = s[s["_act_subj"].str.len() > 5]["_act_subj"].tolist()
-        all_texts = desc_texts + act_texts
+    rows = []
+    for i in range(max_rows):
+        row = {"rank": i+1}
+        for subj in targets:
+            short = subj.replace(" ","")[:10]
+            if i < len(bg_data[subj]):
+                term, count = bg_data[subj][i]
+                row[f"{short}_bigram"] = term
+                row[f"{short}_count"] = count
+            else:
+                row[f"{short}_bigram"] = ""
+                row[f"{short}_count"] = ""
+        rows.append(row)
 
-        desc_fill = round(100 * len(desc_texts) / n, 1)
-        act_fill = round(100 * len(act_texts) / n, 1)
+    sheet1 = pd.DataFrame(rows)
 
-        print(f"  {subj}: {n:,} cases (desc fill {desc_fill}%, act_subj fill {act_fill}%)")
+    # ── Sheet 2: Unigrams side by side ──
+    ug_data = {}
+    for subj in targets:
+        s = client[client["_subj"] == subj]
+        texts = s[s["_desc"].str.len() > 0]["_desc"].tolist() + s[s["_act"].str.len() > 5]["_act"].tolist()
+        ug_data[subj] = unigrams(texts, max_rows)
 
-        rows = []
+    rows2 = []
+    for i in range(max_rows):
+        row = {"rank": i+1}
+        for subj in targets:
+            short = subj.replace(" ","")[:10]
+            if i < len(ug_data[subj]):
+                term, count = ug_data[subj][i]
+                row[f"{short}_word"] = term
+                row[f"{short}_count"] = count
+            else:
+                row[f"{short}_word"] = ""
+                row[f"{short}_count"] = ""
+        rows2.append(row)
 
-        # Header info
-        rows.append({"type": "INFO", "rank": 0, "term": f"Total cases: {n:,}", "count": "", "pct": ""})
-        rows.append({"type": "INFO", "rank": 0, "term": f"Description fill: {desc_fill}%", "count": "", "pct": ""})
-        rows.append({"type": "INFO", "rank": 0, "term": f"Activity Subject fill: {act_fill}%", "count": "", "pct": ""})
-        rows.append({"type": "---", "rank": 0, "term": "", "count": "", "pct": ""})
+    sheet2 = pd.DataFrame(rows2)
 
-        # Unigrams from all text
-        uni = extract_unigrams(all_texts, top_n=50)
-        for i, (word, count) in enumerate(uni, 1):
-            rows.append({
-                "type": "UNIGRAM (desc+act_subj)",
-                "rank": i, "term": word,
-                "count": count,
-                "pct": f"{round(100 * count / n, 1)}%",
-            })
+    # ── Sheet 3: Top Activity Subject phrases (full values) side by side ──
+    act_data = {}
+    for subj in targets:
+        s = client[client["_subj"] == subj]
+        act_texts = s[s["_act"].str.len() > 5]["_act"].tolist()
+        act_data[subj] = act_subj_phrases(act_texts, 20)
 
-        rows.append({"type": "---", "rank": 0, "term": "", "count": "", "pct": ""})
+    rows3 = []
+    for i in range(20):
+        row = {"rank": i+1}
+        for subj in targets:
+            short = subj.replace(" ","")[:10]
+            if i < len(act_data[subj]):
+                phrase, count = act_data[subj][i]
+                row[f"{short}_phrase"] = phrase
+                row[f"{short}_count"] = count
+            else:
+                row[f"{short}_phrase"] = ""
+                row[f"{short}_count"] = ""
+        rows3.append(row)
 
-        # Bigrams from all text
-        bi = extract_bigrams(all_texts, top_n=40)
-        for i, (phrase, count) in enumerate(bi, 1):
-            rows.append({
-                "type": "BIGRAM (desc+act_subj)",
-                "rank": i, "term": phrase,
-                "count": count,
-                "pct": f"{round(100 * count / n, 1)}%",
-            })
-
-        rows.append({"type": "---", "rank": 0, "term": "", "count": "", "pct": ""})
-
-        # Top Activity Subject values (full phrases)
-        act_phrases = extract_from_act_subj_only(act_texts, top_n=40)
-        for i, (phrase, count) in enumerate(act_phrases, 1):
-            rows.append({
-                "type": "ACTIVITY SUBJECT (full value)",
-                "rank": i, "term": phrase[:100],
-                "count": count,
-                "pct": f"{round(100 * count / n, 1)}%",
-            })
-
-        rows.append({"type": "---", "rank": 0, "term": "", "count": "", "pct": ""})
-
-        # Unigrams from Description ONLY
-        desc_uni = extract_unigrams(desc_texts, top_n=30)
-        for i, (word, count) in enumerate(desc_uni, 1):
-            rows.append({
-                "type": "UNIGRAM (desc only)",
-                "rank": i, "term": word,
-                "count": count,
-                "pct": f"{round(100 * count / len(desc_texts), 1)}%" if desc_texts else "",
-            })
-
-        sheet_name = subj.replace(" ", "")[:25]
-        sheets[sheet_name] = pd.DataFrame(rows)
+    sheet3 = pd.DataFrame(rows3)
 
     # Write
     print(f"\nWriting: {OUTPUT_XLSX}")
     with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
-        for name, sdf in sheets.items():
-            write_sheet(writer, name[:31], sdf)
+        write_sheet(writer, "Bigrams", sheet1)
+        write_sheet(writer, "Unigrams", sheet2)
+        write_sheet(writer, "ActivitySubjectPhrases", sheet3)
 
-    print(f"Done in {(datetime.datetime.now() - start).total_seconds():.1f}s")
-    print(f"\n{'='*60}")
-    print("Review the output, then share screenshots.")
-    print("We'll build clusters from what the data actually contains.")
-    print(f"{'='*60}")
-
+    print("Done. 3 sheets — screenshot each one.")
 
 if __name__ == "__main__":
     main()
