@@ -1,29 +1,18 @@
 """
 WAB Subject Sub-Segmentation View — Weekly Call & Leadership Artifact
 ======================================================================
-Produces a clean Excel workbook with:
-  Sheet 1: Master subject table (top 15, ranked by volume)
-  Sheet 2: Research breakdown (data-driven clusters using WAB-specific terms)
-  Sheet 3: Account Maintenance breakdown
-  Sheet 4: New Account Request breakdown
-  Sheet 5: General Questions breakdown
-  Sheet 6: Close Account breakdown
-  Sheet 7: Keyword rationale (full list per cluster — for Chris validation)
-  Sheet 8: Top keywords per subject (data diagnostic for refining clusters)
-  Sheet 9: Methodology + Email Draft
+Data-grounded clusters based on keyword diagnostic output (March 25, 2026).
+Keywords selected from actual unigrams, bigrams, and Activity Subject
+phrases observed in WAB case data.
 
-Run on VDI. Share the workbook + email draft with Chris for validation.
+Output: 9-sheet Excel workbook for Chris validation and Bob presentation.
 
 Dependencies: pandas, openpyxl
 """
 
 # ┌─────────────────────────────────────────────────────────┐
-# │  EDIT THESE 2 VARIABLES BEFORE RUNNING                  │
-# └─────────────────────────────────────────────────────────┘
 CASE_FILE  = r"C:\Users\YourName\Desktop\AAB All Cases.xlsx"
 OUTPUT_DIR = r"C:\Users\YourName\Desktop\wab_output"
-# ┌─────────────────────────────────────────────────────────┐
-# │  DO NOT EDIT BELOW THIS LINE                            │
 # └─────────────────────────────────────────────────────────┘
 
 import os, re, datetime, warnings
@@ -33,28 +22,19 @@ import pandas as pd
 import numpy as np
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-
 OUTPUT_XLSX = os.path.join(OUTPUT_DIR, "wab_subject_subseg_view.xlsx")
 ADMIN_PREFIXES = {"AAB ADMIN", "WAB ADMIN", "AAB ADMIN -", "WAB ADMIN -"}
 
 
-# ═══════════════════════════════════════════════════════════
-#  UTILITIES
-# ═══════════════════════════════════════════════════════════
-
-def norm_col(name):
-    if not isinstance(name, str): return ""
-    return re.sub(r"\s+", " ", name.strip().lower())
-
-def find_col(df, *candidates):
-    lookup = {norm_col(c): c for c in df.columns}
-    for cand in candidates:
-        normed = norm_col(cand)
-        if normed in lookup: return lookup[normed]
-    for cand in candidates:
-        normed = norm_col(cand)
-        for k, v in lookup.items():
-            if normed in k or k in normed: return v
+def find_col(df, *c):
+    lookup = {re.sub(r"\s+"," ",str(x).strip().lower()): x for x in df.columns}
+    for cand in c:
+        n = re.sub(r"\s+"," ",cand.strip().lower())
+        if n in lookup: return lookup[n]
+    for cand in c:
+        n = re.sub(r"\s+"," ",cand.strip().lower())
+        for k,v in lookup.items():
+            if n in k or k in n: return v
     return None
 
 def safe_num(s):
@@ -65,266 +45,278 @@ def write_sheet(writer, name, df):
     if df is None or df.empty:
         df = pd.DataFrame({"note": ["No data"]})
     sn = name[:31]
-    df.to_excel(writer, sheet_name=sn, index=False, freeze_panes=(1, 0))
+    df.to_excel(writer, sheet_name=sn, index=False, freeze_panes=(1,0))
     ws = writer.sheets[sn]
     for col_cells in ws.columns:
         mx = max(len(str(cell.value or "")) for cell in col_cells)
-        ws.column_dimensions[col_cells[0].column_letter].width = min(mx + 3, 60)
+        ws.column_dimensions[col_cells[0].column_letter].width = min(mx+3, 60)
 
-def top_keywords(texts, top_n=30):
-    """Extract top keywords from a list of texts, excluding WAB noise words."""
-    stop = {
-        "the","and","for","that","this","with","from","your","have","are",
-        "was","were","been","has","had","but","not","you","all","can",
-        "will","about","which","their","them","into","also","our","out",
-        "would","could","should","need","may","just","get","got","per",
-        "via","please","thank","thanks","hello","dear","regards","sincerely",
-        "sent","received","fyi","following","below","above","let","its",
-        "who","how","when","where","what","why","any","each","more","some",
-        "very","been","being","other","only","same","than","then","there",
-        "these","those","such","both","does","doing","done","did","make",
-        "made","take","took","give","gave","like","know","see","way",
-        # WAB noise — security banners, email formatting
-        "external","message","caution","originated","outside","organization",
-        "click","links","open","attachments","unless","recognize","sender",
-        "safe","content","secure","proofpoint","encrypted",
-        # Generic banking terms too broad to classify
-        "bank","account","case","email","western","alliance","banker",
-        "client","customer","company","number","date","time","call","office",
-    }
+def top_keywords(texts, top_n=20):
+    stop = {"the","and","for","that","this","with","from","your","have","are",
+            "was","were","been","has","had","but","not","you","all","can",
+            "will","about","which","their","them","into","also","our","out",
+            "would","could","should","need","may","just","get","got","per",
+            "via","please","thank","thanks","hello","dear","regards","sincerely",
+            "sent","received","fyi","following","below","above","let","its",
+            "who","how","when","where","what","why","any","each","more","some",
+            "very","being","other","only","same","than","then","there",
+            "these","those","such","both","does","doing","done","did","make",
+            "made","take","took","give","gave","like","know","see","way",
+            "external","message","caution","originated","outside","organization",
+            "click","links","attachments","unless","recognize","sender",
+            "safe","content","secure","proofpoint","encrypted",
+            "bank","account","case","email","western","alliance","banker",
+            "client","customer","company","number","date","time","call","office"}
     words = Counter()
     for t in texts:
         if not t or len(str(t)) < 3: continue
-        for w in re.findall(r"[a-z]{3,}", str(t).lower()):
-            if w not in stop:
-                words[w] += 1
+        for w in re.findall(r"[a-z][a-z0-9]{2,}", str(t).lower()):
+            if w not in stop: words[w] += 1
     return words.most_common(top_n)
 
 
 # ═══════════════════════════════════════════════════════════
-#  CLUSTER DEFINITIONS — WAB-specific terminology
+#  CLUSTER DEFINITIONS — grounded in actual WAB keyword data
+#  Source: wab_keyword_diagnostic.xlsx bigrams + unigrams
 # ═══════════════════════════════════════════════════════════
 
-# Research sub-segments
+# Priority order matters: first match wins. Most specific patterns first.
+
 RESEARCH_CLUSTERS = OrderedDict([
-    ("Payment / ACH / Wire Research", {
-        "keywords": ["payment", "ach", "wire", "transfer", "deposit", "credit",
-                     "debit", "transaction", "posted", "posting", "return",
-                     "reversal", "refund", "incoming", "outgoing", "funds",
-                     "remittance", "payee", "originator", "batch", "aq2"],
-        "rationale": "Chris stated Research is 'typically payment research.' These keywords "
-                     "capture the core payment lifecycle including WAB-specific terms (aq2 = "
-                     "ACH processing system). Covers inflows, outflows, and corrections.",
-        "source": "Chris March 23: 'Typically payment research.'",
+    ("Payment / ACH Research", {
+        "keywords": ["payment research", "homeowner payment", "missing payment",
+                     "returned payment", "payment failed", "payment return",
+                     "ach", "wire alert", "wire", "misc debit",
+                     "deposit", "return", "reversal", "refund",
+                     "incoming", "outgoing", "remittance", "posted",
+                     "posting", "transaction"],
+        "rationale": "Chris: 'typically payment research.' Confirmed by data: 'payment research'(103), "
+                     "'homeowner payment'(45), 'missing payment'(29), 'returned payment'(29). "
+                     "ACH (262 unigram), wire alert(27) are distinct payment sub-types.",
     }),
-    ("Check / Item Research", {
-        "keywords": ["check", "cheque", "item", "image", "copy", "front", "back",
-                     "clearing", "cashier", "teller", "draft", "stop payment",
-                     "stale", "void", "endorsement"],
-        "rationale": "Check image requests and item research. Bankers pull images from "
-                     "FIS/IBS. Includes stop payments, stale-dated checks, endorsement issues.",
-        "source": "Inferred from Activity Subject patterns + banking operations.",
+    ("Check / Image Research", {
+        "keywords": ["check research", "check copy", "check image", "missing check",
+                     "check error", "checks", "check", "image request",
+                     "cashier", "stop payment", "stale", "endorsement"],
+        "rationale": "Data: 'check research'(76), 'check copy'(29), 'missing check'(29), "
+                     "'check image'(25), 'stop payment'(52). Check-related research is ~15% of Research.",
+    }),
+    ("Rate Sheet / CD / Maturity Inquiry", {
+        "keywords": ["rate sheet", "current rate", "cd rate", "weekly cd",
+                     "interest rate sheet", "maturity notice", "cdars maturity",
+                     "maturity", "cdars", "ics", "intrafi",
+                     "certificate", "renewal", "rollover", "rate"],
+        "rationale": "Data: 'rate sheet'(59), 'maturity notice'(57), 'cdars maturity'(41). "
+                     "These are CD/IntraFi inquiries that landed in Research instead of "
+                     "CD Maintenance. Taxonomy leakage — a finding in itself.",
     }),
     ("Lockbox / HOA Deposit Research", {
-        "keywords": ["lockbox", "hoa", "homeowner", "homeowners", "association",
-                     "dues", "assessment", "coupon", "remit", "bulk",
-                     "pmc", "cmc", "management company"],
-        "rationale": "HOA-specific payment research: lockbox processing, association dues, "
-                     "PMC/CMC deposit inquiries. These are the core HOA banking product and "
-                     "a significant share of Research cases.",
-        "source": "Top keywords in Other/Uncategorized: association(154), hoa(86), "
-                  "lockbox(72), homeowners(62), pmc(50).",
+        "keywords": ["lockbox", "lockbox file", "lockbox ach",
+                     "coupon", "remit", "bulk deposit",
+                     "dues", "assessment"],
+        "rationale": "Data: 'lockbox'(197 unigram), bigrams 'close lockbox'(47), 'lockbox ach'(29). "
+                     "Lockbox is a core HOA banking product — research on lockbox processing "
+                     "is a distinct workflow.",
     }),
-    ("CD / IntraFi / Maturity Research", {
-        "keywords": ["maturity", "cdars", "ics", "intrafi", "certificate",
-                     "renewal", "auto-renew", "auto renew", "rollover", "term",
-                     "cd ", "rate change", "rate inquiry"],
-        "rationale": "CD and IntraFi product research that landed in Research instead of "
-                     "CD Maintenance or IntraFi Maintenance. Maturity inquiries, rate "
-                     "questions, CDARS/ICS product issues.",
-        "source": "Top keywords in Other/Uncategorized: maturity(67), cdars(45). "
-                  "Chris March 23: CD and IntraFi have their own subjects but some leak into Research.",
+    ("HOA / PMC Entity Research", {
+        "keywords": ["homeowners association", "condominium association", "community association",
+                     "owners association", "association inc", "inquiry pmc",
+                     "research pmc", "research homeowner",
+                     "village", "park", "ridge", "manor", "estates",
+                     "hoa", "pmc", "cmc", "management company"],
+        "rationale": "Data: 'homeowners association'(104), 'association inc'(88), 'condominium association'(29). "
+                     "HOA/PMC entity-level research: looking up client info, verifying relationships. "
+                     "Community names (village, park, ridge) are entity identifiers.",
     }),
-    ("Statement / Balance / Reconciliation", {
-        "keywords": ["statement", "balance", "reconcil", "ledger", "interest",
-                     "fee", "analysis", "monthly", "quarterly", "annual",
-                     "audit", "confirmation", "letter", "verify"],
-        "rationale": "Statement requests, balance confirmations, reconciliation support, "
-                     "and audit/verification letters. Often triggered by HOA board reviews.",
-        "source": "Inferred from Activity Subject patterns.",
+    ("Notice / Correspondence", {
+        "keywords": ["notice available", "notice", "correspondence",
+                     "returned mail", "undeliverable", "letter"],
+        "rationale": "Data: 'notice'(132 unigram), 'notice available'(29 bigram). "
+                     "Cases triggered by notices or correspondence events.",
     }),
-    ("Notice / Correspondence Research", {
-        "keywords": ["notice", "notification", "letter", "correspondence",
-                     "mail", "returned mail", "undeliverable", "address",
-                     "contact", "update address"],
-        "rationale": "Cases involving notices sent to clients (e.g. rate change notices, "
-                     "returned mail, address corrections). Distinct from account maintenance "
-                     "because the trigger is a communication event, not a client request.",
-        "source": "Top keywords in Other/Uncategorized: notice(68).",
-    }),
-    ("Account Setup / Misc Research", {
-        "keywords": ["signer", "name change", "update", "modify", "amendment",
-                     "tin", "ein", "ssn", "tax", "w-9", "w9", "certification",
-                     "fraud", "dispute", "unauthorized", "suspicious",
-                     "positive pay", "new account", "onboard", "setup", "opening",
-                     "park", "hold", "restrict", "freeze", "dormant"],
-        "rationale": "Catch-all for non-payment, non-check research: account setup items, "
-                     "TIN/tax issues, fraud disputes, and account restrictions. Many of these "
-                     "are likely mis-categorized and should have been filed under other subjects. "
-                     "'Park' refers to parked/held accounts.",
-        "source": "Residual category + top keyword: park(51).",
+    ("Card Research (Credit/Debit)", {
+        "keywords": ["credit card", "debit card", "card"],
+        "rationale": "Data: 'credit card'(29), 'debit'(unigram). Card-related research "
+                     "distinct from payment or check research.",
     }),
 ])
 
-# Account Maintenance sub-segments
 ACCT_MAINT_CLUSTERS = OrderedDict([
-    ("Address / Signer / Officer Updates", {
-        "keywords": ["address", "signer", "authorized", "officer", "board member",
-                     "name change", "title", "beneficiary", "contact", "phone",
-                     "power of attorney", "poa", "trustee", "resolution"],
-        "rationale": "Account ownership and contact changes. Board member changes for HOAs "
-                     "are a significant driver (Chris confirmed for Signature Card — same "
-                     "pattern applies to Account Maintenance).",
+    ("CD / IntraFi Maturity Processing", {
+        "keywords": ["maturity notice", "cdars maturity", "maturity",
+                     "cdars", "ics", "intrafi", "inc month",
+                     "certificate", "renewal", "rollover", "cd "],
+        "rationale": "Data: 'maturity notice'(330!) is the #1 bigram. CD/IntraFi maturity "
+                     "processing is the single largest Account Maintenance sub-type. "
+                     "Major taxonomy leakage finding — these should arguably be CD Maintenance.",
     }),
-    ("TIN / Tax / Certification / W-9", {
-        "keywords": ["tin", "ein", "ssn", "tax", "w-9", "w9", "certification",
-                     "irs", "backup withholding", "recertif", "1099", "1042"],
-        "rationale": "Tax ID management. TIN is the #1 document term in emails (258 mentions). "
-                     "Onboarding nudge for missing TIN is the clear first automation target.",
+    ("Lockbox File / Configuration", {
+        "keywords": ["lockbox file", "lockbox", "close lockbox", "lockbox ach",
+                     "file properties", "file", "coupon"],
+        "rationale": "Data: 'lockbox file'(165), 'file properties'(76). Lockbox setup, "
+                     "configuration changes, and file management.",
     }),
-    ("CD / Rate / Interest Maintenance", {
-        "keywords": ["cd", "certificate", "maturity", "rate", "renewal", "interest",
-                     "cdars", "ics", "intrafi", "rollover", "term", "yield",
-                     "apy", "apr"],
-        "rationale": "CD product maintenance that landed under Account Maintenance instead of "
-                     "CD Maintenance. Includes rate inquiries and IntraFi product changes.",
+    ("Validation / Document Processing", {
+        "keywords": ["validation file", "management validation", "validation",
+                     "first choice", "choice property",
+                     "action required", "required"],
+        "rationale": "Data: 'validation file'(91), 'management validation'(29), "
+                     "'first choice'(30), 'action required'(31). Document/file validation workflow.",
     }),
-    ("Fee / Adjustment / Refund", {
-        "keywords": ["fee", "waive", "refund", "adjustment", "credit", "reversal",
-                     "nsf", "overdraft", "service charge", "analysis fee",
-                     "monthly fee", "maintenance fee"],
-        "rationale": "Fee-related maintenance: waivers, refunds, adjustments. NSF fees that "
-                     "appear here are fee disputes, not the NSF decisioning workflow.",
+    ("Stop Payment Processing", {
+        "keywords": ["stop payment"],
+        "rationale": "Data: 'stop payment'(98 bigram). Distinct workflow — banker places "
+                     "a stop on a check. Clear, single-action maintenance.",
     }),
-    ("Lockbox / HOA Product Maintenance", {
-        "keywords": ["lockbox", "hoa", "homeowner", "association", "dues",
-                     "assessment", "coupon", "pmc", "cmc", "management company",
-                     "bulk", "sweep", "zba"],
-        "rationale": "HOA-specific product maintenance: lockbox setup/changes, association "
-                     "account configurations, sweep/ZBA setups for PMC structures.",
+    ("Association / HOA Maintenance", {
+        "keywords": ["association inc", "homeowners association", "condominium association",
+                     "community association", "owners association",
+                     "association month", "association account",
+                     "hoa", "pmc", "cmc"],
+        "rationale": "Data: 'association inc'(164), 'homeowners association'(57). "
+                     "HOA entity-level account maintenance.",
     }),
-    ("Online Banking / Access / Portal", {
-        "keywords": ["online", "portal", "login", "password", "access", "user",
-                     "enroll", "token", "authentication", "mobile", "app",
-                     "digital", "bst", "connectlive"],
-        "rationale": "Digital channel maintenance: online banking access, portal enrollment, "
-                     "BST (online banking system) issues, ConnectLive platform questions.",
+    ("Card Maintenance (Debit/Credit)", {
+        "keywords": ["debit card", "credit card", "card"],
+        "rationale": "Data: 'debit card'(41). Card-related maintenance — replacements, "
+                     "limits, activations.",
     }),
-    ("Account Open / Close / Status", {
-        "keywords": ["open", "close", "closing", "new account", "dormant",
-                     "inactive", "restrict", "freeze", "hold", "status",
-                     "reactivat", "convert"],
-        "rationale": "Account lifecycle changes: opening, closing, status changes. Cases "
-                     "that are too small for their own subject category.",
+    ("Fee Waiver / Adjustment", {
+        "keywords": ["waive return", "waive", "fee", "refund", "adjustment",
+                     "service charge", "overdraft"],
+        "rationale": "Data: 'waive return'(33). Fee-related maintenance and adjustments.",
+    }),
+    ("Current Rates / Rate Sheet", {
+        "keywords": ["current rates", "rate sheet", "rates", "interest rate"],
+        "rationale": "Data: bigram 'current rates'(29). Rate inquiries routed to Account Maintenance.",
     }),
 ])
 
-# New Account Request sub-segments
 NEW_ACCT_CLUSTERS = OrderedDict([
     ("HOA / Association New Account", {
-        "keywords": ["hoa", "homeowner", "association", "community", "condo",
-                     "townhome", "pmc", "cmc", "management company", "board",
-                     "governing", "declaration"],
-        "rationale": "New HOA accounts — the core product. PMC onboarding a new "
-                     "community association.",
+        "keywords": ["homeowners association", "condominium association",
+                     "community association", "owners association",
+                     "association inc", "association alliance",
+                     "hoa", "pmc", "cmc", "village", "park",
+                     "ridge", "manor", "estates", "condominium"],
+        "rationale": "Data: 'association inc'(550!), 'homeowners association'(460), "
+                     "'condominium association'(159). The overwhelming majority of new "
+                     "account requests are HOA onboarding.",
     }),
-    ("Document Collection / Missing Docs", {
-        "keywords": ["document", "missing", "need", "require", "submit", "pending",
-                     "outstanding", "provide", "signed", "signature", "form",
-                     "certification", "tin", "ein", "w-9", "w9", "resolution",
-                     "articles", "bylaws", "operating agreement"],
-        "rationale": "Document-gathering phase of new account setup. Missing-info detection "
-                     "is a prime GenAI target here (Chris confirmed onboarding nudge is acceptable).",
+    ("Reserve / Petty Cash / Sub-Account", {
+        "keywords": ["reserve account", "petty cash", "reserve",
+                     "child case", "parent case", "sub account",
+                     "operating", "money market"],
+        "rationale": "Data: 'reserve account'(98), 'petty cash'(42), 'child case'(91), "
+                     "'parent case'(68). HOAs often have multiple sub-accounts: operating, "
+                     "reserve, petty cash.",
     }),
-    ("CD / ICS / CDARS / IntraFi New Account", {
-        "keywords": ["cd", "certificate", "cdars", "ics", "intrafi", "deposit",
-                     "placement", "term", "maturity", "rate"],
-        "rationale": "New CD, ICS, or CDARS account setup — product-specific onboarding.",
+    ("Document / Validation Required", {
+        "keywords": ["validation file", "response required", "maturity notice",
+                     "document", "missing", "pending", "submit",
+                     "tin", "ein", "w-9", "w9", "signed"],
+        "rationale": "Data: 'validation file'(113), 'response required'(64). Document "
+                     "collection and validation during onboarding.",
     }),
-    ("Lockbox / Payment Setup", {
-        "keywords": ["lockbox", "coupon", "remittance", "payment", "ach",
-                     "wire", "sweep", "zba", "setup", "configure"],
-        "rationale": "Setting up payment infrastructure for new accounts: lockbox, "
-                     "ACH origination, wire templates, sweep/ZBA configurations.",
+    ("Bank Account / Product Setup", {
+        "keywords": ["bank account", "bank accounts", "new bank",
+                     "open", "acct", "account request",
+                     "inc alliance", "alliance aab"],
+        "rationale": "Data: 'bank accounts'(72), 'account request'(164 bigram). "
+                     "Generic new account setup not specific to HOA.",
     }),
-    ("ConnectLive / Online Banking Setup", {
-        "keywords": ["connectlive", "online", "portal", "digital", "access",
-                     "enroll", "user", "login", "bst", "mobile"],
-        "rationale": "Digital channel onboarding: ConnectLive platform setup, online "
-                     "banking enrollment for new accounts.",
+    ("Lockbox / ACH / Wire Setup", {
+        "keywords": ["lockbox", "ach", "wire", "sweep", "zba",
+                     "positive pay", "online banking", "connectlive"],
+        "rationale": "Setting up payment infrastructure for new accounts.",
     }),
 ])
 
-# General Questions sub-segments
 GEN_Q_CLUSTERS = OrderedDict([
-    ("Balance / Transaction Inquiry", {
-        "keywords": ["balance", "transaction", "payment", "deposit", "credit",
-                     "debit", "posted", "pending", "available", "ledger",
-                     "statement", "history"],
-        "rationale": "Quick balance checks and transaction inquiries — the most common "
-                     "general question type.",
+    ("Rate Sheet / Interest Rate Inquiry", {
+        "keywords": ["rate sheet", "rate sheets", "interest rate",
+                     "interest rates", "current rate", "rates",
+                     "money market", "cd rate", "yield"],
+        "rationale": "Data: 'rate sheet'(98!), 'interest rates'(82), 'current rate'(72). "
+                     "Rate inquiries are the dominant General Questions sub-type.",
     }),
-    ("Rate / Product Inquiry", {
-        "keywords": ["rate", "interest", "cd", "yield", "apy", "product",
-                     "option", "offer", "pricing", "term", "maturity"],
-        "rationale": "Product and rate inquiries — clients comparing options or asking "
-                     "about current rates.",
+    ("Online Banking / Digital Access", {
+        "keywords": ["online banking", "portal", "login", "password",
+                     "access", "connectlive", "mobile", "app",
+                     "token", "reset", "locked"],
+        "rationale": "Data: 'online banking'(153 unigram), 'debit card'(123). "
+                     "Digital channel access questions.",
     }),
-    ("Fee / Charge Inquiry", {
-        "keywords": ["fee", "charge", "cost", "price", "waive", "service",
-                     "monthly", "analysis", "overdraft", "nsf"],
-        "rationale": "Fee-related questions: what was this charge, can you waive it.",
+    ("Card Inquiry (Debit/Credit)", {
+        "keywords": ["debit card", "credit card", "card", "visa",
+                     "mastercard", "atm", "pin"],
+        "rationale": "Data: 'debit card'(123 unigram), 'credit card'(113). "
+                     "Card-related questions — limits, activation, replacements.",
     }),
-    ("Access / Technical / Portal", {
-        "keywords": ["login", "password", "access", "online", "portal",
-                     "connectlive", "mobile", "app", "token", "reset",
-                     "locked", "error"],
-        "rationale": "Technical access questions — portal login issues, password resets.",
+    ("HOA / Association Question", {
+        "keywords": ["hoa", "homeowners", "association", "community",
+                     "condominium", "owners association",
+                     "hoa payment", "pmc", "cmc", "lockbox"],
+        "rationale": "Data: 'hoa'(524 unigram), 'association'(487), "
+                     "'community association'(81). HOA-specific questions.",
     }),
-    ("HOA / Association Inquiry", {
-        "keywords": ["hoa", "homeowner", "association", "community", "board",
-                     "dues", "assessment", "pmc", "cmc", "lockbox"],
-        "rationale": "General questions about HOA account structure, dues processing, "
-                     "association-specific inquiries.",
+    ("Product / Account Inquiry", {
+        "keywords": ["ics account", "cdars", "reserve account",
+                     "petty cash", "money market", "savings",
+                     "checking", "deposit", "balance", "statement",
+                     "account ending"],
+        "rationale": "Data: 'ics'(155 unigram), 'cdars'(190), 'reserve account'(53). "
+                     "Product-specific balance/feature inquiries.",
+    }),
+    ("Process Support / Internal", {
+        "keywords": ["process support", "quick question", "question",
+                     "help", "assist", "information"],
+        "rationale": "Data: 'process support'(72), 'quick question'(53 bigram). "
+                     "Internal process questions or generic help requests.",
     }),
 ])
 
-# Close Account sub-segments
 CLOSE_ACCT_CLUSTERS = OrderedDict([
-    ("Standard Account Closure", {
-        "keywords": ["close", "closing", "closure", "terminate", "final",
-                     "remaining balance", "disburs", "last statement"],
-        "rationale": "Standard account closure requests — the main workflow.",
+    ("CD / IntraFi Maturity Closure", {
+        "keywords": ["maturity notice", "cdars maturity", "matured",
+                     "maturity", "cdars", "ics", "intrafi",
+                     "cd maturity", "certificate"],
+        "rationale": "Data: 'maturity notice'(218!) is the #1 Close Account bigram. "
+                     "CDs reaching maturity and closing rather than renewing. "
+                     "Major finding: 218 out of ~1,859 Close Account cases are actually "
+                     "CD maturity events, not full relationship closures.",
+    }),
+    ("HOA / Association Account Closure", {
+        "keywords": ["homeowners association", "association inc",
+                     "condominium association", "community association",
+                     "owners association", "property owners",
+                     "hoa", "pmc", "village", "park", "ridge"],
+        "rationale": "Data: 'homeowners association'(202), 'association inc'(172). "
+                     "Full HOA account closures — PMC departing the bank.",
+    }),
+    ("Standard Account Closure Request", {
+        "keywords": ["account closure", "close account", "close accounts",
+                     "closure request", "request close", "account closures",
+                     "close acct", "closing accounts",
+                     "close bank", "acct closure", "offboarding"],
+        "rationale": "Data: 'account closure'(217), 'close accounts'(134), "
+                     "'closure request'(94). Standard closure workflow — the checklist "
+                     "Chris described (IBS, BST, ACH tracker).",
+    }),
+    ("Reserve / Sub-Account Closure", {
+        "keywords": ["reserve", "petty cash", "funds",
+                     "bank accounts", "bank account",
+                     "cash check", "request redeem"],
+        "rationale": "Data: 'reserve'(75 unigram), 'bank accounts'(66). "
+                     "Closing sub-accounts within a relationship (reserve, petty cash) "
+                     "rather than the full relationship.",
     }),
     ("Lockbox / Product Closure", {
-        "keywords": ["lockbox", "ach", "wire", "sweep", "zba", "positive pay",
-                     "online banking", "bst", "connectlive", "deactivat"],
-        "rationale": "Closing ancillary products/services tied to the account. Chris noted "
-                     "this requires manual checklist across IBS, BST, ACH tracker — each "
-                     "product must be closed separately.",
-    }),
-    ("Loan / Credit Payoff", {
-        "keywords": ["loan", "credit", "payoff", "paid", "lien", "collateral",
-                     "mortgage", "line of credit", "credit card"],
-        "rationale": "Loan/credit product payoff verification before account can be closed. "
-                     "Chris: 'Any loans? check paid off. Credit card → closed.'",
-    }),
-    ("HOA / PMC Relationship Closure", {
-        "keywords": ["hoa", "homeowner", "association", "pmc", "cmc",
-                     "management company", "transition", "transfer",
-                     "new bank", "moving", "departing"],
-        "rationale": "Full HOA relationship departure — PMC moving to another bank. "
-                     "Involves multiple accounts, lockboxes, and digital access.",
+        "keywords": ["lockbox", "ach", "wire", "sweep",
+                     "online banking", "positive pay",
+                     "connectlive", "bst"],
+        "rationale": "Closing ancillary products. Chris: 'Lockbox has to be close — "
+                     "need to keep it open for 10 days for all txns to go through.'",
     }),
 ])
 
@@ -334,47 +326,39 @@ CLOSE_ACCT_CLUSTERS = OrderedDict([
 # ═══════════════════════════════════════════════════════════
 
 def classify(desc, act_subj, cluster_defs):
-    """Classify a case into a cluster using keyword matching.
-    Returns the first matching cluster name, or residual categories."""
     combined = f"{desc} {act_subj}".lower()
-    # Strip external email security banners
-    combined = re.sub(
-        r"caution.*?originated outside.*?organization[.\s]*",
-        " ", combined, flags=re.IGNORECASE | re.DOTALL
-    )
+    combined = re.sub(r"caution.*?originated outside.*?organization[.\s]*", " ",
+                      combined, flags=re.IGNORECASE | re.DOTALL)
     combined = re.sub(r"https?://\S+", " ", combined)
+    combined = re.sub(r"\*{2,}", " ", combined)  # strip *** markers
 
     for cluster_name, cfg in cluster_defs.items():
-        if not cfg.get("keywords"):
-            continue
-        if any(kw in combined for kw in cfg["keywords"]):
+        kws = cfg.get("keywords", [])
+        if not kws: continue
+        if any(kw in combined for kw in kws):
             return cluster_name
     if len(combined.strip()) < 10:
         return "(No Text)"
     return "(Other/Uncategorized)"
 
 
-def build_breakdown(client_df, subject_name, cluster_defs, parent_subject_filter=None):
-    """Build a breakdown table for a subject using the given cluster definitions."""
-    if parent_subject_filter:
-        subset = client_df[client_df["_subject"].str.contains(parent_subject_filter, case=False, na=False)].copy()
+def build_breakdown(client_df, subject_name, cluster_defs, subject_filter=None):
+    if subject_filter:
+        subset = client_df[client_df["_subject"].str.contains(subject_filter, case=False, na=False)].copy()
     else:
         subset = client_df[client_df["_subject"] == subject_name].copy()
 
     if len(subset) == 0:
-        return pd.DataFrame({"note": [f"No {subject_name} cases found"]})
+        return pd.DataFrame({"note": [f"No {subject_name} cases"]})
 
     subset["_cluster"] = subset.apply(
         lambda r: classify(r["_desc"], r["_act_subj"], cluster_defs), axis=1)
 
     grp = subset.groupby("_cluster")
     rows = []
-
-    # Ordered by cluster definition, then residuals
     all_clusters = list(cluster_defs.keys()) + ["(No Text)", "(Other/Uncategorized)"]
     for cluster in all_clusters:
-        if cluster not in grp.groups:
-            continue
+        if cluster not in grp.groups: continue
         s = grp.get_group(cluster)
         n = len(s)
         hrs = s["_hours"].dropna()
@@ -390,17 +374,16 @@ def build_breakdown(client_df, subject_name, cluster_defs, parent_subject_filter
             "unresolved": int(unres),
             "pct_unresolved": f"{round(100 * unres / n, 1)}%",
             "desc_fill": f"{desc_fill}%",
-            "classification_basis": ", ".join(cluster_defs.get(cluster, {}).get("keywords", [])[:6]) + ("..." if len(cluster_defs.get(cluster, {}).get("keywords", [])) > 6 else "") if cluster in cluster_defs else "(residual)",
+            "key_terms": ", ".join(cluster_defs.get(cluster, {}).get("keywords", [])[:5]) + ("..." if len(cluster_defs.get(cluster, {}).get("keywords", [])) > 5 else "") if cluster in cluster_defs else "(residual)",
         })
 
-    # Top keywords from Other/Uncategorized
+    # Top keywords from Other
     other = subset[subset["_cluster"] == "(Other/Uncategorized)"]
     if len(other) > 0:
-        other_kw = top_keywords(other["_desc"].tolist() + other["_act_subj"].tolist(), top_n=20)
-        kw_str = ", ".join(f"{w}({c})" for w, c in other_kw)
+        kw = top_keywords(other["_desc"].tolist() + other["_act_subj"].tolist(), 15)
         rows.append({
             "cluster": ">>> TOP KEYWORDS IN OTHER <<<",
-            "classification_basis": kw_str,
+            "key_terms": ", ".join(f"{w}({c})" for w, c in kw),
         })
 
     return pd.DataFrame(rows)
@@ -416,244 +399,187 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     df = pd.read_excel(CASE_FILE, header=0, engine="openpyxl")
-    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
-    df = df.dropna(axis=1, how="all")
-    print(f"  Cases: {len(df):,}")
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")].dropna(axis=1, how="all")
 
-    # Column mapping
-    co_col = find_col(df, "Company Name (Company) (Company)", "Company Name", "Customer")
+    co_col = find_col(df, "Company Name (Company) (Company)", "Company Name")
     subj_col = find_col(df, "Subject")
     hrs_col = find_col(df, "Resolved In Hours")
     desc_col = find_col(df, "Description")
     act_col = find_col(df, "Activity Subject")
     status_col = find_col(df, "Status Reason", "Status")
 
-    df["_company"] = df[co_col].fillna("").astype(str).str.strip() if co_col else ""
-    _upper = df["_company"].str.upper()
-    df["_is_internal"] = _upper.apply(lambda x: any(x.startswith(p) for p in ADMIN_PREFIXES))
-    df["_subject"] = df[subj_col].fillna("(blank)").astype(str).str.strip() if subj_col else ""
+    df["_co"] = df[co_col].fillna("").astype(str).str.strip() if co_col else ""
+    df["_is_internal"] = df["_co"].str.upper().apply(lambda x: any(x.startswith(p) for p in ADMIN_PREFIXES))
+    df["_subject"] = df[subj_col].fillna("").astype(str).str.strip() if subj_col else ""
     df["_hours"] = safe_num(df[hrs_col]) if hrs_col else np.nan
     df["_desc"] = df[desc_col].fillna("").astype(str).str.strip() if desc_col else ""
     df["_act_subj"] = df[act_col].fillna("").astype(str).str.strip() if act_col else ""
-
     resolved_kw = ["resolved", "closed", "cancelled", "canceled"]
-    if status_col:
-        df["_is_resolved"] = df[status_col].fillna("").astype(str).str.lower().apply(
-            lambda x: any(k in x for k in resolved_kw))
-    else:
-        df["_is_resolved"] = True
+    df["_is_resolved"] = df[status_col].fillna("").astype(str).str.lower().apply(
+        lambda x: any(k in x for k in resolved_kw)) if status_col else True
 
     client = df[~df["_is_internal"]].copy()
     n_total = len(client)
-    print(f"  Client inclusive: {n_total:,}\n")
+    print(f"  Client: {n_total:,}\n")
 
     sheets = OrderedDict()
 
-    # ═══════════════════════════════════════════════════════
-    #  Sheet 1: Master Subject Table
-    # ═══════════════════════════════════════════════════════
+    # ── Sheet 1: Master Subject View ──
     subj_vc = client["_subject"].value_counts()
-    top_subjects = subj_vc.head(15).index.tolist()
+    top15 = subj_vc.head(15).index.tolist()
 
-    chris_notes = {
-        "Research": "Typically payment research; a lot different things go into it. Break into smaller pieces.",
-        "CD Maintenance": "Banker sits on case till maturity date. Task itself not time-taking. By design.",
-        "Signature Card": "Keith owns. Large backlog. Board member changes drive volume. Want to automate.",
-        "NSF and Non-Post": "2-3 hrs/day per banker. Daily report, decision items one at a time in IBS.",
-        "Close Account": "Manual checklist across IBS, BST, ACH tracker. Systems don't talk. Consolidating into CRM.",
+    chris = {
+        "Research": "Typically payment research; a lot different things go into it.",
+        "CD Maintenance": "Banker sits on case till maturity date. By design.",
+        "Signature Card": "Keith owns. Large backlog. Board member changes.",
+        "NSF and Non-Post": "2-3 hrs/day per banker. Decision items one at a time in IBS.",
+        "Close Account": "Manual checklist: IBS, BST, ACH tracker. Consolidating into CRM.",
         "IntraFi Maintenance": "Similar to CD maintenance. Check with James.",
-        "QC Finding": "Eduardo Jacobo. Reports of prior day changes. Goal: build QC into workflow.",
+        "QC Finding": "Eduardo Jacobo. Prior day change reports.",
     }
-
-    genai_notes = {
-        "Research": "HIGH — sub-segmentation enables targeted routing. AI can classify email intent.",
-        "New Account Request": "HIGH — 65% desc fill, 86% act_subj. Draft reply + missing-info detection.",
-        "Account Maintenance": "HIGH — 56% desc fill, 98% act_subj. Fat tail (P90 312h). AI triage.",
-        "NSF and Non-Post": "MEDIUM — already fast (1.5h). Automation of IBS decisioning, not AI.",
-        "New Account Child Case": "MEDIUM — linked to parent. AI value in document review (IDP).",
-        "CD Maintenance": "LOW — by design wait. Not a speed target.",
-        "Close Account": "LOW — process redesign needed first. CRM consolidation.",
-        "General Questions": "MEDIUM — fast median but fat tail. AI routing could help.",
-        "Signature Card": "MEDIUM — backlog problem. IDP for document processing.",
-        "Fraud Alert": "LOW — already fast (2.6h). Rules-based automation.",
-        "IntraFi Maintenance": "LOW — by design wait like CD.",
-        "Transfer": "LOW — already fast (1.3h). Straight-through automation.",
-        "Statements": "LOW — fast. Proofpoint noise is 67% of email volume.",
-        "Online Banking": "MEDIUM — check if self-service can absorb.",
-        "QC Finding": "LOW — internal process, not client-facing.",
+    genai = {
+        "Research": "HIGH — sub-segment into 7 types, route by email intent",
+        "New Account Request": "HIGH — draft reply + missing-info detection",
+        "Account Maintenance": "HIGH — fat tail, CD maturity leakage finding",
+        "NSF and Non-Post": "MEDIUM — IBS automation, not AI",
+        "CD Maintenance": "LOW — by design wait time",
+        "Close Account": "LOW — process redesign first (CRM consolidation)",
+        "General Questions": "MEDIUM — rate sheet queries could be self-service",
+        "Signature Card": "MEDIUM — IDP for document processing",
+        "Fraud Alert": "LOW — already fast, rules-based",
+        "IntraFi Maintenance": "LOW — by design wait like CD",
+        "Transfer": "LOW — already fast, straight-through",
     }
-
-    subseg_subjects = {
-        "Research": "YES — see Sheet 2",
-        "Account Maintenance": "YES — see Sheet 3",
-        "New Account Request": "YES — see Sheet 4",
-        "General Questions": "YES — see Sheet 5",
-        "Close Account": "YES — see Sheet 6",
+    subseg = {
+        "Research": "YES — Sheet 2 (7 sub-types)",
+        "Account Maintenance": "YES — Sheet 3 (8 sub-types)",
+        "New Account Request": "YES — Sheet 4 (5 sub-types)",
+        "General Questions": "YES — Sheet 5 (6 sub-types)",
+        "Close Account": "YES — Sheet 6 (5 sub-types)",
     }
 
     master_rows = []
-    for subj in top_subjects:
+    for subj in top15:
         s = client[client["_subject"] == subj]
         n = len(s)
         hrs = s["_hours"].dropna()
         unres = (~s["_is_resolved"]).sum()
-        desc_fill = round(100 * (s["_desc"].str.len() > 0).mean(), 0)
-        act_fill = round(100 * (s["_act_subj"].str.len() > 5).mean(), 0)
-
         master_rows.append({
             "subject": subj, "cases": n,
-            "pct_of_total": f"{round(100 * n / n_total, 1)}%",
-            "median_hrs": round(hrs.median(), 1) if len(hrs) > 0 else "",
-            "p75_hrs": round(hrs.quantile(0.75), 1) if len(hrs) > 0 else "",
-            "p90_hrs": round(hrs.quantile(0.9), 1) if len(hrs) > 0 else "",
+            "pct": f"{round(100*n/n_total,1)}%",
+            "median_hrs": round(hrs.median(),1) if len(hrs) > 0 else "",
+            "p75_hrs": round(hrs.quantile(0.75),1) if len(hrs) > 0 else "",
+            "p90_hrs": round(hrs.quantile(0.9),1) if len(hrs) > 0 else "",
             "unresolved": int(unres),
-            "pct_unresolved": f"{round(100 * unres / n, 1)}%",
-            "desc_fill": f"{desc_fill}%",
-            "act_subj_fill": f"{act_fill}%",
-            "chris_context": chris_notes.get(subj, ""),
-            "genai_opportunity": genai_notes.get(subj, ""),
-            "sub_segmentation": subseg_subjects.get(subj, ""),
+            "pct_unresolved": f"{round(100*unres/n,1)}%",
+            "chris_context": chris.get(subj, ""),
+            "genai_opportunity": genai.get(subj, ""),
+            "sub_segmentation": subseg.get(subj, ""),
         })
-
-    total_cases = sum(r["cases"] for r in master_rows)
-    master_rows.append({
-        "subject": "=== TOP 15 TOTAL ===",
-        "cases": total_cases,
-        "pct_of_total": f"{round(100 * total_cases / n_total, 1)}%",
-    })
-
+    total = sum(r["cases"] for r in master_rows)
+    master_rows.append({"subject": "=== TOP 15 ===", "cases": total, "pct": f"{round(100*total/n_total,1)}%"})
     sheets["1_MasterSubjectView"] = pd.DataFrame(master_rows)
-    print("  Sheet 1: Master Subject View")
+    print("  Sheet 1: Master")
 
-    # ═══════════════════════════════════════════════════════
-    #  Sheets 2-6: Subject Breakdowns
-    # ═══════════════════════════════════════════════════════
-    breakdowns = [
-        ("2_ResearchBreakdown", "Research", RESEARCH_CLUSTERS, None),
-        ("3_AcctMaintBreakdown", "Account Maintenance", ACCT_MAINT_CLUSTERS, None),
-        ("4_NewAcctReqBreakdown", "New Account Request", NEW_ACCT_CLUSTERS, None),
-        ("5_GenQuestBreakdown", "General Questions", GEN_Q_CLUSTERS, None),
-        ("6_CloseAcctBreakdown", "Close Account", CLOSE_ACCT_CLUSTERS, "Clos"),
-    ]
+    # ── Sheets 2-6: Breakdowns ──
+    for sn, subj, clust, filt in [
+        ("2_Research", "Research", RESEARCH_CLUSTERS, None),
+        ("3_AcctMaint", "Account Maintenance", ACCT_MAINT_CLUSTERS, None),
+        ("4_NewAcctReq", "New Account Request", NEW_ACCT_CLUSTERS, None),
+        ("5_GeneralQ", "General Questions", GEN_Q_CLUSTERS, None),
+        ("6_CloseAcct", "Close Account", CLOSE_ACCT_CLUSTERS, "Clos"),
+    ]:
+        sheets[sn] = build_breakdown(client, subj, clust, filt)
+        nc = len(client[client["_subject"]==subj]) if not filt else len(client[client["_subject"].str.contains(filt,case=False,na=False)])
+        print(f"  {sn}: {subj} ({nc:,})")
 
-    for sheet_name, subject, clusters, filter_pattern in breakdowns:
-        bd = build_breakdown(client, subject, clusters, filter_pattern)
-        sheets[sheet_name] = bd
-        n_cases = client[client["_subject"] == subject].shape[0] if not filter_pattern else client[client["_subject"].str.contains(filter_pattern, case=False, na=False)].shape[0]
-        print(f"  {sheet_name}: {subject} ({n_cases:,} cases)")
-
-    # ═══════════════════════════════════════════════════════
-    #  Sheet 7: Keyword Rationale (for Chris)
-    # ═══════════════════════════════════════════════════════
+    # ── Sheet 7: Keyword Rationale ──
     kw_rows = []
-    all_cluster_sets = [
-        ("Research", RESEARCH_CLUSTERS),
-        ("Account Maintenance", ACCT_MAINT_CLUSTERS),
-        ("New Account Request", NEW_ACCT_CLUSTERS),
-        ("General Questions", GEN_Q_CLUSTERS),
+    for subj_name, cluster_defs in [
+        ("Research", RESEARCH_CLUSTERS), ("Account Maintenance", ACCT_MAINT_CLUSTERS),
+        ("New Account Request", NEW_ACCT_CLUSTERS), ("General Questions", GEN_Q_CLUSTERS),
         ("Close Account", CLOSE_ACCT_CLUSTERS),
-    ]
-    for subj_name, cluster_defs in all_cluster_sets:
-        for cluster_name, cfg in cluster_defs.items():
+    ]:
+        for cn, cfg in cluster_defs.items():
             kw_rows.append({
-                "subject": subj_name,
-                "cluster": cluster_name,
-                "keywords": ", ".join(cfg.get("keywords", [])) or "(residual)",
-                "rationale": cfg.get("rationale", ""),
-                "source": cfg.get("source", ""),
-                "validation": "PENDING — needs Chris confirmation",
+                "subject": subj_name, "cluster": cn,
+                "keywords": ", ".join(cfg.get("keywords",[])) or "(residual)",
+                "rationale": cfg.get("rationale",""),
+                "validation": "PENDING",
             })
     sheets["7_KeywordRationale"] = pd.DataFrame(kw_rows)
-    print("  Sheet 7: Keyword Rationale")
+    print("  Sheet 7: Rationale")
 
-    # ═══════════════════════════════════════════════════════
-    #  Sheet 8: Top Keywords Per Subject (diagnostic)
-    # ═══════════════════════════════════════════════════════
-    diag_rows = []
-    for subj in top_subjects:
-        s = client[client["_subject"] == subj]
-        texts = s["_desc"].tolist() + s["_act_subj"].tolist()
-        kws = top_keywords(texts, top_n=25)
-        for word, count in kws:
-            diag_rows.append({
-                "subject": subj, "keyword": word, "count": count,
-                "pct_of_subject_texts": f"{round(100 * count / max(len(s), 1), 1)}%",
-            })
-    sheets["8_TopKeywordsPerSubject"] = pd.DataFrame(diag_rows)
-    print("  Sheet 8: Top Keywords Per Subject (diagnostic)")
-
-    # ═══════════════════════════════════════════════════════
-    #  Sheet 9: Methodology + Email Draft
-    # ═══════════════════════════════════════════════════════
-    email_rows = [
-        {"section": "METHODOLOGY", "content":
-         "Sub-segmentation approach: rule-based keyword matching on Description + Activity Subject fields. "
-         "For each case, we concatenate the two text fields, strip external email security banners, "
-         "then check keyword lists in priority order (first match wins). Keywords were selected based on: "
-         "(1) Chris's March 23 characterizations, (2) top keywords extracted from the data itself, "
-         "(3) WAB-specific product terminology (lockbox, CDARS, ICS, ConnectLive, BST, aq2, PMC, CMC, HOA)."},
-        {"section": "METHODOLOGY", "content":
-         "Five subjects are sub-segmented: Research (7 clusters), Account Maintenance (7 clusters), "
-         "New Account Request (5 clusters), General Questions (5 clusters), Close Account (4 clusters). "
-         "Together these cover ~17,000 cases or 44% of the client portfolio."},
-        {"section": "METHODOLOGY", "content":
-         "Key limitation: Description is only 36-65% filled depending on subject. Activity Subject "
-         "(86-99% filled) carries most of the signal. The '(Other/Uncategorized)' rate per subject "
-         "indicates keyword coverage gaps — top keywords from that bucket are shown for SME review."},
-        {"section": "---", "content": ""},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "Subject: Case Subject Sub-Segmentation — Validation Before Leadership Presentation"},
-        {"section": "DRAFT EMAIL TO CHRIS", "content": "Hi Chris,"},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "Following our March 23 discussion, we've sub-segmented five case subjects using keyword "
-         "matching on the Description and Activity Subject fields in CRM. Before we present this to "
-         "Bob, I'd like your confirmation that the categories and keyword logic make sense."},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "The approach: for each case, we look for specific keywords in the text. For example, "
-         "Research cases mentioning 'payment,' 'ACH,' 'wire,' 'deposit' are classified as "
-         "'Payment / ACH / Wire Research.' Cases mentioning 'lockbox,' 'HOA,' 'association,' 'PMC' "
-         "become 'Lockbox / HOA Deposit Research.' We added WAB-specific terms like aq2, CDARS, ICS, "
-         "ConnectLive, BST based on what we see in the data."},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "Subjects sub-segmented:\n"
-         "  1. Research (4,407 cases → 7 sub-types)\n"
-         "  2. Account Maintenance (3,242 cases → 7 sub-types)\n"
-         "  3. New Account Request (3,665 cases → 5 sub-types)\n"
-         "  4. General Questions (1,783 cases → 5 sub-types)\n"
-         "  5. Close Account (1,859 cases → 4 sub-types)"},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "The attached workbook has:\n"
-         "  - Sheet 1: Master view of all top 15 subjects with your March 23 context\n"
-         "  - Sheets 2-6: Breakdown per subject with case counts, resolution times, and keywords used\n"
-         "  - Sheet 7: Full keyword rationale — exactly which words drive each classification\n"
-         "  - Sheet 8: Raw top keywords per subject (what the data actually contains)"},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "Questions for you:\n"
-         "  1. Do the sub-types make sense for how your team thinks about this work?\n"
-         "  2. Are there WAB-specific terms we're missing? (e.g., internal system names, "
-         "product codes, workflow terms)\n"
-         "  3. The 'Other/Uncategorized' buckets show what we couldn't classify — the top "
-         "keywords from those buckets are listed at the bottom of each breakdown sheet. "
-         "Do any of those suggest categories we should add?\n"
-         "  4. For the leadership presentation, is there a different way you'd group these?\n"
-         "  5. Any subjects we should NOT sub-segment (too sensitive, too noisy)?"},
-        {"section": "DRAFT EMAIL TO CHRIS", "content":
-         "Happy to walk through this on a quick call if that's easier.\n\nBest,\nRavi"},
+    # ── Sheet 8: Cross-Subject Findings ──
+    findings = [
+        {"finding": "CD/IntraFi Maturity Leakage",
+         "detail": "Maturity notice appears as #1 bigram in Account Maintenance (330), Close Account (218), and Research (57). "
+                   "These are CD/IntraFi maturity events landing in the wrong subject. ~600 cases are mis-categorized.",
+         "implication": "Subject taxonomy needs a maturity workflow path. Or — these subjects should have a "
+                        "sub-tag for maturity processing. AI could auto-tag at case creation."},
+        {"finding": "HOA Entity Names Dominate All Subjects",
+         "detail": "'homeowners association,' 'association inc,' 'condominium association' are top bigrams "
+                   "in Research, Account Maintenance, New Account Request, AND Close Account. "
+                   "These are HOA entity identifiers, not workflow descriptors.",
+         "implication": "The Subject field captures WHAT the case is about, but the text fields are full of "
+                        "WHO it's about (the HOA name). AI classification needs to look past entity names to find intent."},
+        {"finding": "Rate Sheet Queries Could Be Self-Service",
+         "detail": "Rate sheet/interest rate inquiries are the #1 General Questions sub-type (98 bigrams). "
+                   "These are lookups, not complex requests.",
+         "implication": "A rate sheet bot or self-service portal page could deflect these entirely. "
+                        "No AI needed — just information availability."},
+        {"finding": "Lockbox Is a Cross-Subject Workflow",
+         "detail": "Lockbox appears in Research (197 unigram), Account Maintenance (165 bigram 'lockbox file'), "
+                   "New Account (setup), and Close Account (closure). It's a product that spans the case lifecycle.",
+         "implication": "Lockbox cases may benefit from a dedicated subject or at minimum a sub-tag. "
+                        "AI routing could identify lockbox-related cases regardless of subject."},
+        {"finding": "Validation File Workflow in Account Maintenance",
+         "detail": "'validation file'(91), 'file properties'(76), 'management validation'(29) form a "
+                   "distinct document processing workflow within Account Maintenance.",
+         "implication": "This is potentially addressable by the IDP pilot Chris mentioned. "
+                        "If IDP works for <20 page docs, validation files are a candidate."},
     ]
-    sheets["9_Methodology_EmailDraft"] = pd.DataFrame(email_rows)
-    print("  Sheet 9: Methodology + Email Draft")
+    sheets["8_CrossSubjectFindings"] = pd.DataFrame(findings)
+    print("  Sheet 8: Cross-Subject Findings")
 
-    # ── Write ──
+    # ── Sheet 9: Email Draft ──
+    email = [
+        {"section": "DRAFT EMAIL", "content": "Subject: Case Subject Sub-Segmentation — Validation Before Leadership Presentation"},
+        {"section": "DRAFT EMAIL", "content": "Hi Chris,"},
+        {"section": "DRAFT EMAIL", "content":
+         "Following our March 23 discussion, we've sub-segmented five case subjects using keyword "
+         "matching on Description and Activity Subject fields. We used terms from the actual data "
+         "(not assumed vocabulary) — including WAB-specific terms like lockbox, CDARS, ICS, "
+         "ConnectLive, PMC, aq2 that we found in the text."},
+        {"section": "DRAFT EMAIL", "content":
+         "Subjects broken down:\n"
+         "  1. Research (4,407 → 7 sub-types: Payment/ACH, Check/Image, Rate/CD/Maturity, Lockbox/HOA, Entity, Notice, Card)\n"
+         "  2. Account Maintenance (3,242 → 8 sub-types: CD/Maturity is #1 at ~330 cases — taxonomy leakage finding)\n"
+         "  3. New Account Request (3,665 → 5 sub-types: HOA onboarding dominates)\n"
+         "  4. General Questions (1,783 → 6 sub-types: Rate sheet queries are #1 — self-service candidate)\n"
+         "  5. Close Account (1,859 → 5 sub-types: CD maturity closures are ~218 of these)"},
+        {"section": "DRAFT EMAIL", "content":
+         "Key finding: CD/IntraFi maturity events appear in Account Maintenance, Close Account, AND "
+         "Research — about 600 cases total that are really maturity processing but landed under other "
+         "subjects. This is a taxonomy finding we should discuss."},
+        {"section": "DRAFT EMAIL", "content":
+         "Questions:\n"
+         "  1. Do these sub-types match how your team thinks about the work?\n"
+         "  2. The keyword lists are in Sheet 7 — any terms we're missing?\n"
+         "  3. The maturity leakage finding — is this known? Would it be useful to surface for Bob?\n"
+         "  4. Should we show all 5 breakdowns to leadership, or focus on Research + one other?\n"
+         "  5. Any subjects we should NOT break down (too sensitive)?"},
+        {"section": "DRAFT EMAIL", "content": "Happy to walk through on a quick call.\n\nBest,\nRavi"},
+    ]
+    sheets["9_EmailDraft"] = pd.DataFrame(email)
+    print("  Sheet 9: Email Draft")
+
+    # Write
     print(f"\nWriting: {OUTPUT_XLSX}")
     with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
         for name, sdf in sheets.items():
             write_sheet(writer, name[:31], sdf)
-
     print(f"Done in {(datetime.datetime.now() - start).total_seconds():.1f}s")
-    print(f"\n{'='*60}")
-    print("Subjects sub-segmented: Research, Account Maintenance,")
-    print("  New Account Request, General Questions, Close Account")
-    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
