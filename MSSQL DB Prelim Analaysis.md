@@ -274,7 +274,8 @@ ORDER BY ApproxRowCount DESC;
 
 ## Smart sampling 
 
-```sqlSET NOCOUNT ON;
+```sql
+SET NOCOUNT ON;
 
 ------------------------------------------------------------
 -- CONFIG
@@ -312,48 +313,40 @@ INTO #ViewsToProfile
 FROM v
 WHERE rn <= @MaxViewsPerSchema;
 
-SELECT
-    SchemaName,
-    COUNT(*) AS ViewsToProfile,
-    SUM(ColumnCount) AS TotalColumns
-FROM #ViewsToProfile
-GROUP BY SchemaName
-ORDER BY SchemaName;
-
 ------------------------------------------------------------
 -- OUTPUT TABLES
 ------------------------------------------------------------
 IF OBJECT_ID('tempdb..#ViewProfile') IS NOT NULL DROP TABLE #ViewProfile;
 CREATE TABLE #ViewProfile
 (
-    SchemaName   NVARCHAR(128),
-    ViewName     NVARCHAR(128),
-    ColumnName   NVARCHAR(128),
-    DataType     NVARCHAR(128),
-    SampledRows  INT,
-    NullCount    INT,
-    NullPct      DECIMAL(5,2),
+    SchemaName    NVARCHAR(128),
+    ViewName      NVARCHAR(128),
+    ColumnName    NVARCHAR(128),
+    DataType      NVARCHAR(128),
+    SampledRows   INT,
+    NullCount     INT,
+    NullPct       DECIMAL(5,2),
     DistinctCount INT,
-    MinValue     NVARCHAR(200),
-    MaxValue     NVARCHAR(200),
-    BlankCount   INT,
-    ErrorMsg     NVARCHAR(2000)
+    MinValue      NVARCHAR(200),
+    MaxValue      NVARCHAR(200),
+    BlankCount    INT,
+    ErrorMsg      NVARCHAR(2000)
 );
 
 IF OBJECT_ID('tempdb..#ViewStatus') IS NOT NULL DROP TABLE #ViewStatus;
 CREATE TABLE #ViewStatus
 (
-    SchemaName  NVARCHAR(128),
-    ViewName    NVARCHAR(128),
-    SampledRows INT,
-    ColumnsCnt  INT,
+    SchemaName   NVARCHAR(128),
+    ViewName     NVARCHAR(128),
+    SampledRows  INT,
+    ColumnsCnt   INT,
     SecondsTaken INT,
-    Status      NVARCHAR(20),
-    ErrorMsg    NVARCHAR(2000)
+    Status       NVARCHAR(20),
+    ErrorMsg     NVARCHAR(2000)
 );
 
 ------------------------------------------------------------
--- LOOP WITHOUT CURSOR / @@FETCH_STATUS
+-- LOOP
 ------------------------------------------------------------
 DECLARE @schema NVARCHAR(128);
 DECLARE @view NVARCHAR(128);
@@ -361,7 +354,6 @@ DECLARE @objid INT;
 DECLARE @sql NVARCHAR(MAX);
 DECLARE @colSql NVARCHAR(MAX);
 DECLARE @start DATETIME;
-DECLARE @SampleTableName SYSNAME;
 
 WHILE EXISTS (SELECT 1 FROM #ViewsToProfile)
 BEGIN
@@ -374,25 +366,21 @@ BEGIN
     SET @start = GETDATE();
     SET @colSql = N'';
     SET @objid = OBJECT_ID(QUOTENAME(@schema) + N'.' + QUOTENAME(@view));
-    SET @SampleTableName = N'#Sample';
 
     BEGIN TRY
-        ------------------------------------------------------------
-        -- Build per-column profiling SQL
-        ------------------------------------------------------------
         SELECT @colSql = @colSql +
             CASE WHEN @colSql = N'' THEN N'' ELSE N' UNION ALL ' END +
             N'SELECT ' +
             N'''' + REPLACE(@schema,'''','''''') + N''' AS SchemaName, ' +
             N'''' + REPLACE(@view,'''','''''') + N''' AS ViewName, ' +
             N'''' + REPLACE(c.name,'''','''''') + N''' AS ColumnName, ' +
-            N'''' + 
+            N'''' +
                 REPLACE(
                     t.name +
                     CASE
-                        WHEN t.name IN ('varchar','char') 
+                        WHEN t.name IN ('varchar','char')
                             THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length AS VARCHAR(10)) END + ')'
-                        WHEN t.name IN ('nvarchar','nchar') 
+                        WHEN t.name IN ('nvarchar','nchar')
                             THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length / 2 AS VARCHAR(10)) END + ')'
                         WHEN t.name IN ('decimal','numeric')
                             THEN '(' + CAST(c.precision AS VARCHAR(10)) + ',' + CAST(c.scale AS VARCHAR(10)) + ')'
@@ -404,7 +392,6 @@ BEGIN
             N'SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) AS NullCount, ' +
             N'CAST(100.0 * SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0) AS DECIMAL(5,2)) AS NullPct, ' +
             N'COUNT(DISTINCT ' + QUOTENAME(c.name) + N') AS DistinctCount, ' +
-
             CASE
                 WHEN t.name IN ('text','ntext','image','xml','varbinary','binary','geography','geometry','hierarchyid')
                     THEN N'CAST(NULL AS NVARCHAR(200)) AS MinValue, CAST(NULL AS NVARCHAR(200)) AS MaxValue, '
@@ -418,7 +405,6 @@ BEGIN
                     N'CAST(MIN(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)) AS MinValue, ' +
                     N'CAST(MAX(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)) AS MaxValue, '
             END +
-
             CASE
                 WHEN t.name IN ('varchar','nvarchar','char','nchar')
                     THEN N'SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NOT NULL AND LTRIM(RTRIM(CAST(' + QUOTENAME(c.name) + N' AS NVARCHAR(MAX)))) = '''' THEN 1 ELSE 0 END) AS BlankCount, '
@@ -426,7 +412,7 @@ BEGIN
                     N'CAST(NULL AS INT) AS BlankCount, '
             END +
             N'CAST(NULL AS NVARCHAR(2000)) AS ErrorMsg ' +
-            N'FROM ' + @SampleTableName
+            N'FROM #Sample'
         FROM sys.columns c
         JOIN sys.types t
             ON c.user_type_id = t.user_type_id
@@ -436,27 +422,23 @@ BEGIN
 
         IF @colSql IS NOT NULL AND LEN(@colSql) > 0
         BEGIN
-            ------------------------------------------------------------
-            -- sample rows from view into temp table, then profile columns
-            ------------------------------------------------------------
             SET @sql = N'
-                IF OBJECT_ID(''tempdb..#Sample'') IS NOT NULL DROP TABLE #Sample;
+IF OBJECT_ID(''tempdb..#Sample'') IS NOT NULL DROP TABLE #Sample;
 
-                SELECT TOP (' + CAST(@MaxRows AS VARCHAR(20)) + N') *
-                INTO #Sample
-                FROM ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@view) + N'
-                WHERE ABS(CHECKSUM(NEWID())) % 100 < ' + CAST(@SamplePct AS VARCHAR(10)) + N';
+SELECT TOP (' + CAST(@MaxRows AS VARCHAR(20)) + N') *
+INTO #Sample
+FROM ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@view) + N'
+WHERE ABS(CHECKSUM(NEWID())) % 100 < ' + CAST(@SamplePct AS VARCHAR(10)) + N';
 
-                INSERT INTO #ViewProfile
-                (
-                    SchemaName, ViewName, ColumnName, DataType,
-                    SampledRows, NullCount, NullPct, DistinctCount,
-                    MinValue, MaxValue, BlankCount, ErrorMsg
-                )
-                ' + @colSql + N';
+INSERT INTO #ViewProfile
+(
+    SchemaName, ViewName, ColumnName, DataType,
+    SampledRows, NullCount, NullPct, DistinctCount,
+    MinValue, MaxValue, BlankCount, ErrorMsg
+)
+' + @colSql + N';
 
-                DROP TABLE #Sample;
-            ';
+DROP TABLE #Sample;';
 
             EXEC sp_executesql @sql;
 
@@ -470,7 +452,7 @@ BEGIN
                 ISNULL(MAX(SampledRows), 0),
                 COUNT(*),
                 DATEDIFF(SECOND, @start, GETDATE()),
-                'OK',
+                N''OK'',
                 NULL
             FROM #ViewProfile
             WHERE SchemaName = @schema
@@ -484,10 +466,13 @@ BEGIN
             )
             VALUES
             (
-                @schema, @view, NULL, NULL,
+                @schema,
+                @view,
+                NULL,
+                NULL,
                 DATEDIFF(SECOND, @start, GETDATE()),
-                'ERROR',
-                'No columns found for object'
+                N'ERROR',
+                N'No columns found for object'
             );
         END
     END TRY
@@ -505,12 +490,12 @@ BEGIN
             NULL,
             NULL,
             DATEDIFF(SECOND, @start, GETDATE()),
-            'ERROR',
+            N'ERROR',
             LEFT(ERROR_MESSAGE(), 2000)
         );
     END CATCH;
 
-    RAISERROR('Done: %s.%s (%d sec)', 0, 1, @schema, @view, DATEDIFF(SECOND, @start, GETDATE())) WITH NOWAIT;
+    PRINT N'Done: ' + @schema + N'.' + @view + N' (' + CAST(DATEDIFF(SECOND, @start, GETDATE()) AS NVARCHAR(20)) + N' sec)';
 
     DELETE FROM #ViewsToProfile
     WHERE SchemaName = @schema
@@ -521,18 +506,15 @@ END;
 -- REPORTS
 ------------------------------------------------------------
 
--- 1. Processing status
 SELECT *
 FROM #ViewStatus
 ORDER BY SchemaName, ViewName;
 
--- 2. Column profiles
 SELECT *
 FROM #ViewProfile
 WHERE ErrorMsg IS NULL
 ORDER BY SchemaName, ViewName, ColumnName;
 
--- 3. Always-null columns
 SELECT
     SchemaName, ViewName, ColumnName, DataType, SampledRows
 FROM #ViewProfile
@@ -540,7 +522,6 @@ WHERE NullPct = 100
   AND SampledRows > 0
 ORDER BY SchemaName, ViewName, ColumnName;
 
--- 4. Low-cardinality columns
 SELECT
     SchemaName, ViewName, ColumnName, DataType, DistinctCount, SampledRows
 FROM #ViewProfile
@@ -548,7 +529,6 @@ WHERE DistinctCount BETWEEN 1 AND 20
   AND SampledRows > 0
 ORDER BY DistinctCount, SchemaName, ViewName, ColumnName;
 
--- 5. Date ranges
 SELECT
     SchemaName, ViewName, ColumnName, MinValue, MaxValue
 FROM #ViewProfile
@@ -556,7 +536,6 @@ WHERE DataType LIKE '%date%'
    OR DataType LIKE '%time%'
 ORDER BY SchemaName, ViewName, ColumnName;
 
--- 6. Estimated total rows from sample
 SELECT
     SchemaName,
     ViewName,
