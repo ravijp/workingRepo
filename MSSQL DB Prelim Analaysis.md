@@ -271,3 +271,199 @@ ORDER BY ApproxRowCount DESC;
 | `STRING_AGG` for column listing | Quick schema overview in one row per view |
 
 **Expected runtime**: For ~50 views, typically **1–3 minutes** depending on view complexity and source latency. If any single view takes too long (e.g., complex joins without pushdown), you can add a timeout using `EXEC sp_executesql` wrapped with a `WAITFOR` check or simply reduce `@SampleSize` to 100.
+
+## Smart sampling 
+
+```sql
+SET NOCOUNT ON;
+
+-- ============================================================
+-- CONFIG: Control what gets profiled
+-- ============================================================
+DECLARE @SamplePct INT = 1;        -- 1% of rows
+DECLARE @MaxRows INT = 2000;       -- Cap per view
+DECLARE @MaxViewsPerSchema INT = 10; -- Profile top N views per schema
+
+-- ============================================================
+-- SELECT WHICH VIEWS TO PROFILE
+-- ============================================================
+IF OBJECT_ID('tempdb..#ViewsToProfile') IS NOT NULL DROP TABLE #ViewsToProfile;
+
+-- Pick views strategically: 
+-- All views from small schemas + random sample from FISBIC_PROCESSED
+SELECT SchemaName, ViewName, ColumnCount
+INTO #ViewsToProfile
+FROM (
+    SELECT 
+        s.name AS SchemaName,
+        v.name AS ViewName,
+        (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = v.object_id) AS ColumnCount,
+        ROW_NUMBER() OVER (PARTITION BY s.name ORDER BY NEWID()) AS rn,  -- random pick
+        COUNT(*) OVER (PARTITION BY s.name) AS SchemaViewCount
+    FROM sys.views v
+    JOIN sys.schemas s ON v.schema_id = s.schema_id
+) x
+WHERE rn <= @MaxViewsPerSchema  -- top N random per schema
+ORDER BY SchemaName, ViewName;
+
+-- Show what we'll profile
+SELECT 
+    SchemaName, 
+    COUNT(*) AS ViewsToProfile,
+    SUM(ColumnCount) AS TotalColumns
+FROM #ViewsToProfile
+GROUP BY SchemaName
+ORDER BY SchemaName;
+
+-- ============================================================
+-- PROFILING TABLES
+-- ============================================================
+IF OBJECT_ID('tempdb..#ViewProfile') IS NOT NULL DROP TABLE #ViewProfile;
+CREATE TABLE #ViewProfile (
+    SchemaName        NVARCHAR(128),
+    ViewName          NVARCHAR(128),
+    ColumnName        NVARCHAR(128),
+    DataType          NVARCHAR(128),
+    SampledRows       INT,
+    NullCount         INT,
+    NullPct           DECIMAL(5,2),
+    DistinctCount     INT,
+    MinValue          NVARCHAR(200),
+    MaxValue          NVARCHAR(200),
+    BlankCount        INT,
+    ErrorMsg          NVARCHAR(2000)
+);
+
+IF OBJECT_ID('tempdb..#ViewStatus') IS NOT NULL DROP TABLE #ViewStatus;
+CREATE TABLE #ViewStatus (
+    SchemaName NVARCHAR(128),
+    ViewName   NVARCHAR(128),
+    SampledRows INT,
+    Columns    INT,
+    Seconds    INT,
+    Status     NVARCHAR(20),
+    ErrorMsg   NVARCHAR(2000)
+);
+
+-- ============================================================
+-- MAIN LOOP
+-- ============================================================
+DECLARE @schema NVARCHAR(128), @view NVARCHAR(128);
+DECLARE @sql NVARCHAR(MAX), @colSql NVARCHAR(MAX);
+DECLARE @start DATETIME;
+
+DECLARE vc CURSOR FAST_FORWARD FOR
+    SELECT SchemaName, ViewName FROM #ViewsToProfile ORDER BY SchemaName, ViewName;
+
+OPEN vc;
+FETCH NEXT FROM vc INTO @schema, @view;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @start = GETDATE();
+    
+    BEGIN TRY
+        IF OBJECT_ID('tempdb..#Sample') IS NOT NULL DROP TABLE #Sample;
+        
+        -- Build column profiling SQL
+        SET @colSql = '';
+        
+        SELECT @colSql = @colSql +
+            'SELECT ''' + REPLACE(@schema,'''','''''') + ''',''' 
+            + REPLACE(@view,'''','''''') + ''','''
+            + REPLACE(c.name,'''','''''') + ''','''
+            + t.name + CASE 
+                WHEN t.name IN ('varchar','nvarchar') THEN '(' + CASE WHEN c.max_length=-1 THEN 'MAX' ELSE CAST(c.max_length AS VARCHAR) END + ')'
+                WHEN t.name IN ('decimal','numeric') THEN '(' + CAST(c.precision AS VARCHAR) + ',' + CAST(c.scale AS VARCHAR) + ')'
+                ELSE '' END + ''','
+            + 'COUNT(*),'
+            + 'SUM(CASE WHEN ' + QUOTENAME(c.name) + ' IS NULL THEN 1 ELSE 0 END),'
+            + 'CAST(100.0*SUM(CASE WHEN ' + QUOTENAME(c.name) + ' IS NULL THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS DECIMAL(5,2)),'
+            + 'COUNT(DISTINCT ' + QUOTENAME(c.name) + '),'
+            + CASE 
+                WHEN t.name IN ('text','ntext','image','xml','varbinary','binary','geography','geometry','hierarchyid') 
+                    THEN 'NULL,NULL,'
+                WHEN t.name LIKE '%date%' OR t.name LIKE '%time%'
+                    THEN 'CONVERT(NVARCHAR(50),MIN(' + QUOTENAME(c.name) + '),121),CONVERT(NVARCHAR(50),MAX(' + QUOTENAME(c.name) + '),121),'
+                WHEN t.name IN ('varchar','nvarchar','char','nchar')
+                    THEN 'LEFT(MIN(CAST(' + QUOTENAME(c.name) + ' AS NVARCHAR(200))),200),LEFT(MAX(CAST(' + QUOTENAME(c.name) + ' AS NVARCHAR(200))),200),'
+                ELSE 'CAST(MIN(' + QUOTENAME(c.name) + ') AS NVARCHAR(200)),CAST(MAX(' + QUOTENAME(c.name) + ') AS NVARCHAR(200)),'
+              END
+            + CASE 
+                WHEN t.name IN ('varchar','nvarchar','char','nchar')
+                    THEN 'SUM(CASE WHEN ' + QUOTENAME(c.name) + ' IS NOT NULL AND LTRIM(RTRIM(' + QUOTENAME(c.name) + '))='''' THEN 1 ELSE 0 END)'
+                ELSE 'NULL' END
+            + ',NULL'
+            + ' FROM #Sample UNION ALL '
+        FROM sys.columns c
+        JOIN sys.types t ON c.user_type_id = t.user_type_id
+        WHERE c.object_id = OBJECT_ID(QUOTENAME(@schema) + '.' + QUOTENAME(@view))
+        ORDER BY c.column_id;
+
+        IF LEN(@colSql) > 10
+        BEGIN
+            SET @colSql = LEFT(@colSql, LEN(@colSql) - 10);
+
+            SET @sql = '
+                SELECT TOP(' + CAST(@MaxRows AS VARCHAR) + ') * INTO #Sample
+                FROM ' + QUOTENAME(@schema) + '.' + QUOTENAME(@view) + '
+                WHERE ABS(CHECKSUM(NEWID())) % 100 < ' + CAST(@SamplePct AS VARCHAR) + ';
+                INSERT INTO #ViewProfile ' + @colSql + ';
+                DROP TABLE #Sample;';
+
+            EXEC sp_executesql @sql;
+
+            INSERT INTO #ViewStatus
+            SELECT @schema, @view,
+                   (SELECT MAX(SampledRows) FROM #ViewProfile WHERE SchemaName=@schema AND ViewName=@view),
+                   (SELECT COUNT(DISTINCT ColumnName) FROM #ViewProfile WHERE SchemaName=@schema AND ViewName=@view),
+                   DATEDIFF(SECOND, @start, GETDATE()), 'OK', NULL;
+        END
+    END TRY
+    BEGIN CATCH
+        IF OBJECT_ID('tempdb..#Sample') IS NOT NULL DROP TABLE #Sample;
+        INSERT INTO #ViewStatus VALUES (@schema, @view, NULL, NULL, 
+            DATEDIFF(SECOND, @start, GETDATE()), 'ERROR', LEFT(ERROR_MESSAGE(),2000));
+    END CATCH
+
+    RAISERROR('Done: %s.%s (%d sec)', 0, 1, @schema, @view, 
+              DATEDIFF(SECOND, @start, GETDATE())) WITH NOWAIT;
+
+    FETCH NEXT FROM vc INTO @schema, @view;
+END
+CLOSE vc; DEALLOCATE vc;
+
+-- ============================================================
+-- REPORTS
+-- ============================================================
+
+-- 1. Processing status
+SELECT * FROM #ViewStatus ORDER BY SchemaName, ViewName;
+
+-- 2. Column profiles
+SELECT * FROM #ViewProfile WHERE ErrorMsg IS NULL
+ORDER BY SchemaName, ViewName, ColumnName;
+
+-- 3. Always-NULL columns
+SELECT SchemaName, ViewName, ColumnName, DataType, SampledRows
+FROM #ViewProfile WHERE NullPct = 100 AND SampledRows > 0;
+
+-- 4. Low cardinality (enums/flags)
+SELECT SchemaName, ViewName, ColumnName, DataType, DistinctCount, SampledRows
+FROM #ViewProfile WHERE DistinctCount BETWEEN 1 AND 20 AND SampledRows > 0
+ORDER BY DistinctCount;
+
+-- 5. Date ranges
+SELECT SchemaName, ViewName, ColumnName, MinValue, MaxValue
+FROM #ViewProfile WHERE DataType LIKE '%date%'
+ORDER BY SchemaName, ViewName;
+
+-- 6. Estimated total rows
+SELECT SchemaName, ViewName, SampledRows,
+    CASE 
+        WHEN SampledRows >= @MaxRows THEN '>' + FORMAT(@MaxRows * (100/@SamplePct), 'N0') + '+'
+        ELSE '~' + FORMAT(SampledRows * (100/@SamplePct), 'N0')
+    END AS EstRowCount
+FROM #ViewStatus WHERE Status = 'OK'
+ORDER BY SampledRows DESC;
+```
