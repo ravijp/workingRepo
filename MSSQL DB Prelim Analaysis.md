@@ -528,3 +528,260 @@ ORDER BY SampledRows DESC;
 -- DROP TABLE #ViewProfile;
 -- DROP TABLE #ViewStatus;
 ```
+
+
+# Smart Start
+```sql
+SET NOCOUNT ON;
+
+------------------------------------------------------------
+-- CONFIG
+------------------------------------------------------------
+DECLARE @MaxViewsPerSchema INT = 3;   -- START SMALL
+DECLARE @TopN INT = 100;              -- SMALL SAMPLE
+
+------------------------------------------------------------
+-- PICK VIEWS
+------------------------------------------------------------
+IF OBJECT_ID('tempdb..#ViewsToProfile') IS NOT NULL DROP TABLE #ViewsToProfile;
+
+CREATE TABLE #ViewsToProfile
+(
+    RowNum      INT,
+    SchemaName  NVARCHAR(128),
+    ViewName    NVARCHAR(128),
+    ColumnCount INT
+);
+
+INSERT INTO #ViewsToProfile (RowNum, SchemaName, ViewName, ColumnCount)
+SELECT
+    ROW_NUMBER() OVER (ORDER BY sub.SchemaName, sub.ViewName),
+    sub.SchemaName,
+    sub.ViewName,
+    sub.ColumnCount
+FROM (
+    SELECT
+        s.name AS SchemaName,
+        vw.name AS ViewName,
+        (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = vw.object_id) AS ColumnCount,
+        ROW_NUMBER() OVER (PARTITION BY s.name ORDER BY vw.name) AS rn
+    FROM sys.views vw
+    JOIN sys.schemas s ON s.schema_id = vw.schema_id
+) sub
+WHERE sub.rn <= @MaxViewsPerSchema;
+
+-- Show plan
+SELECT SchemaName, COUNT(*) AS Cnt FROM #ViewsToProfile GROUP BY SchemaName ORDER BY SchemaName;
+
+------------------------------------------------------------
+-- OUTPUT TABLES
+------------------------------------------------------------
+IF OBJECT_ID('tempdb..#ViewProfile') IS NOT NULL DROP TABLE #ViewProfile;
+CREATE TABLE #ViewProfile
+(
+    SchemaName    NVARCHAR(128),
+    ViewName      NVARCHAR(128),
+    ColumnName    NVARCHAR(128),
+    DataType      NVARCHAR(128),
+    SampledRows   INT,
+    NullCount     INT,
+    NullPct       DECIMAL(5,2),
+    DistinctCount INT,
+    MinValue      NVARCHAR(200),
+    MaxValue      NVARCHAR(200),
+    BlankCount    INT,
+    ErrorMsg      NVARCHAR(2000)
+);
+
+IF OBJECT_ID('tempdb..#ViewStatus') IS NOT NULL DROP TABLE #ViewStatus;
+CREATE TABLE #ViewStatus
+(
+    SchemaName   NVARCHAR(128),
+    ViewName     NVARCHAR(128),
+    SampledRows  INT,
+    ColumnsCnt   INT,
+    SecondsTaken INT,
+    Status       NVARCHAR(20),
+    ErrorMsg     NVARCHAR(2000)
+);
+
+------------------------------------------------------------
+-- STEP 1: First just test which views respond fast
+-- Simple SELECT TOP(1) to check responsiveness
+------------------------------------------------------------
+IF OBJECT_ID('tempdb..#FastViews') IS NOT NULL DROP TABLE #FastViews;
+CREATE TABLE #FastViews
+(
+    SchemaName NVARCHAR(128),
+    ViewName   NVARCHAR(128),
+    IsFast     BIT,
+    TestSec    INT
+);
+
+DECLARE @s NVARCHAR(128), @v NVARCHAR(128);
+DECLARE @sql NVARCHAR(MAX);
+DECLARE @t DATETIME;
+DECLARE @i INT = 1, @n INT;
+
+SELECT @n = COUNT(*) FROM #ViewsToProfile;
+
+WHILE @i <= @n
+BEGIN
+    SELECT @s = SchemaName, @v = ViewName
+    FROM #ViewsToProfile WHERE RowNum = @i;
+
+    SET @t = GETDATE();
+
+    BEGIN TRY
+        SET @sql = N'SELECT TOP(1) 1 AS x FROM ' + QUOTENAME(@s) + N'.' + QUOTENAME(@v);
+        EXEC sp_executesql @sql;
+
+        INSERT INTO #FastViews VALUES (@s, @v, 1, DATEDIFF(SECOND, @t, GETDATE()));
+    END TRY
+    BEGIN CATCH
+        INSERT INTO #FastViews VALUES (@s, @v, 0, DATEDIFF(SECOND, @t, GETDATE()));
+    END CATCH
+
+    SET @i = @i + 1;
+END
+
+-- Show which views are responsive
+SELECT * FROM #FastViews ORDER BY IsFast DESC, TestSec;
+
+------------------------------------------------------------
+-- STEP 2: Profile ONLY fast views
+------------------------------------------------------------
+DECLARE @schema NVARCHAR(128);
+DECLARE @view NVARCHAR(128);
+DECLARE @objid INT;
+DECLARE @colSql NVARCHAR(MAX);
+DECLARE @start DATETIME;
+DECLARE @elapsed INT;
+DECLARE @counter INT = 1;
+DECLARE @total INT;
+DECLARE @viewFull NVARCHAR(500);
+
+-- Only profile views that responded within 10 seconds
+IF OBJECT_ID('tempdb..#FastViewsToProfile') IS NOT NULL DROP TABLE #FastViewsToProfile;
+
+CREATE TABLE #FastViewsToProfile
+(
+    RowNum     INT,
+    SchemaName NVARCHAR(128),
+    ViewName   NVARCHAR(128)
+);
+
+INSERT INTO #FastViewsToProfile (RowNum, SchemaName, ViewName)
+SELECT
+    ROW_NUMBER() OVER (ORDER BY SchemaName, ViewName),
+    SchemaName,
+    ViewName
+FROM #FastViews
+WHERE IsFast = 1
+  AND TestSec <= 10;
+
+SELECT @total = COUNT(*) FROM #FastViewsToProfile;
+
+WHILE @counter <= @total
+BEGIN
+    SELECT
+        @schema = SchemaName,
+        @view = ViewName
+    FROM #FastViewsToProfile
+    WHERE RowNum = @counter;
+
+    SET @start = GETDATE();
+    SET @colSql = N'';
+    SET @objid = OBJECT_ID(QUOTENAME(@schema) + N'.' + QUOTENAME(@view));
+    SET @viewFull = QUOTENAME(@schema) + N'.' + QUOTENAME(@view);
+
+    BEGIN TRY
+        SELECT @colSql = @colSql +
+            CASE WHEN @colSql = N'' THEN N'' ELSE N' UNION ALL ' END +
+            N'SELECT ' +
+            N'''' + REPLACE(@schema, '''', '''''') + N''', ' +
+            N'''' + REPLACE(@view, '''', '''''') + N''', ' +
+            N'''' + REPLACE(c.name, '''', '''''') + N''', ' +
+            N'''' +
+                t.name +
+                CASE
+                    WHEN t.name IN ('varchar','char')
+                        THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length AS VARCHAR(10)) END + ')'
+                    WHEN t.name IN ('nvarchar','nchar')
+                        THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length / 2 AS VARCHAR(10)) END + ')'
+                    WHEN t.name IN ('decimal','numeric')
+                        THEN '(' + CAST(c.precision AS VARCHAR(10)) + ',' + CAST(c.scale AS VARCHAR(10)) + ')'
+                    ELSE ''
+                END +
+            N''', ' +
+            N'COUNT(*), ' +
+            N'SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END), ' +
+            N'CAST(100.0 * SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0) AS DECIMAL(5,2)), ' +
+            N'COUNT(DISTINCT ' + QUOTENAME(c.name) + N'), ' +
+            CASE
+                WHEN t.name IN ('text','ntext','image','xml','varbinary','binary',
+                                'geography','geometry','hierarchyid','uniqueidentifier')
+                    THEN N'CAST(NULL AS NVARCHAR(200)), CAST(NULL AS NVARCHAR(200)), '
+                WHEN t.name IN ('date','datetime','datetime2','smalldatetime','datetimeoffset')
+                    THEN N'CONVERT(NVARCHAR(50), MIN(' + QUOTENAME(c.name) + N'), 121), ' +
+                         N'CONVERT(NVARCHAR(50), MAX(' + QUOTENAME(c.name) + N'), 121), '
+                WHEN t.name IN ('varchar','nvarchar','char','nchar')
+                    THEN N'LEFT(MIN(' + QUOTENAME(c.name) + N'), 200), ' +
+                         N'LEFT(MAX(' + QUOTENAME(c.name) + N'), 200), '
+                WHEN t.name IN ('bit')
+                    THEN N'CAST(MIN(CAST(' + QUOTENAME(c.name) + N' AS INT)) AS NVARCHAR(200)), ' +
+                         N'CAST(MAX(CAST(' + QUOTENAME(c.name) + N' AS INT)) AS NVARCHAR(200)), '
+                ELSE
+                    N'CAST(MIN(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)), ' +
+                    N'CAST(MAX(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)), '
+            END +
+            CASE
+                WHEN t.name IN ('varchar','nvarchar','char','nchar')
+                    THEN N'SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NOT NULL AND LTRIM(RTRIM(' + QUOTENAME(c.name) + N')) = '''' THEN 1 ELSE 0 END), '
+                ELSE
+                    N'CAST(NULL AS INT), '
+            END +
+            N'CAST(NULL AS NVARCHAR(2000)) ' +
+            N'FROM (SELECT TOP (' + CAST(@TopN AS NVARCHAR(10)) + N') * FROM ' + @viewFull + N') AS s'
+        FROM sys.columns c
+        JOIN sys.types t ON c.user_type_id = t.user_type_id
+        WHERE c.object_id = @objid
+        ORDER BY c.column_id;
+
+        IF @colSql IS NOT NULL AND LEN(@colSql) > 0
+        BEGIN
+            SET @sql =
+                N'INSERT INTO #ViewProfile (SchemaName, ViewName, ColumnName, DataType, SampledRows, NullCount, NullPct, DistinctCount, MinValue, MaxValue, BlankCount, ErrorMsg) ' +
+                @colSql;
+
+            EXEC sp_executesql @sql;
+
+            SET @elapsed = DATEDIFF(SECOND, @start, GETDATE());
+
+            INSERT INTO #ViewStatus (SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg)
+            SELECT
+                @schema, @view,
+                ISNULL(MAX(SampledRows), 0),
+                COUNT(*),
+                @elapsed,
+                'OK', NULL
+            FROM #ViewProfile
+            WHERE SchemaName = @schema AND ViewName = @view;
+        END
+    END TRY
+    BEGIN CATCH
+        SET @elapsed = DATEDIFF(SECOND, @start, GETDATE());
+        INSERT INTO #ViewStatus (SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg)
+        VALUES (@schema, @view, NULL, NULL, @elapsed, 'ERROR', LEFT(ERROR_MESSAGE(), 2000));
+    END CATCH
+
+    SET @counter = @counter + 1;
+END
+
+------------------------------------------------------------
+-- REPORTS
+------------------------------------------------------------
+SELECT * FROM #FastViews ORDER BY IsFast DESC, TestSec;
+SELECT * FROM #ViewStatus ORDER BY Status, SchemaName, ViewName;
+SELECT * FROM #ViewProfile WHERE ErrorMsg IS NULL ORDER BY SchemaName, ViewName, ColumnName;
+```
