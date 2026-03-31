@@ -341,7 +341,11 @@ SELECT
     c.name AS ColumnName,
     t.name AS DataType,
     COUNT(DISTINCT v.object_id) AS UsedInViewCount,
-    STRING_AGG(s.name + '.' + v.name, ', ') AS Views
+    LEFT(
+        STRING_AGG(CAST(s.name + '.' + v.name AS VARCHAR(MAX)), ', ') 
+        WITHIN GROUP (ORDER BY s.name, v.name),
+        4000
+    ) AS Views_Truncated
 FROM sys.views v
 JOIN sys.schemas s ON v.schema_id = s.schema_id
 JOIN sys.columns c ON v.object_id = c.object_id
