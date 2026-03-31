@@ -280,38 +280,39 @@ SET NOCOUNT ON;
 ------------------------------------------------------------
 -- CONFIG
 ------------------------------------------------------------
-DECLARE @SamplePct INT = 1;             -- pseudo-random row filter %
-DECLARE @MaxRows INT = 2000;            -- cap sampled rows per view
-DECLARE @MaxViewsPerSchema INT = 10;    -- number of views per schema
+DECLARE @SamplePct INT = 1;
+DECLARE @MaxRows INT = 2000;
+DECLARE @MaxViewsPerSchema INT = 10;
 
 ------------------------------------------------------------
 -- PICK VIEWS TO PROFILE
 ------------------------------------------------------------
 IF OBJECT_ID('tempdb..#ViewsToProfile') IS NOT NULL DROP TABLE #ViewsToProfile;
 
-;WITH v AS
-(
+SELECT
+    ROW_NUMBER() OVER (ORDER BY sub.SchemaName, sub.ViewName) AS RowNum,
+    sub.SchemaName,
+    sub.ViewName,
+    sub.ColumnCount
+INTO #ViewsToProfile
+FROM (
     SELECT
         s.name AS SchemaName,
         vw.name AS ViewName,
-        (
-            SELECT COUNT(*)
-            FROM sys.columns c
-            WHERE c.object_id = vw.object_id
-        ) AS ColumnCount,
+        (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = vw.object_id) AS ColumnCount,
         ROW_NUMBER() OVER (PARTITION BY s.name ORDER BY NEWID()) AS rn
     FROM sys.views vw
-    JOIN sys.schemas s
-        ON s.schema_id = vw.schema_id
-)
+    JOIN sys.schemas s ON s.schema_id = vw.schema_id
+) sub
+WHERE sub.rn <= @MaxViewsPerSchema;
+
 SELECT
-    IDENTITY(INT,1,1) AS RowNum,
     SchemaName,
-    ViewName,
-    ColumnCount
-INTO #ViewsToProfile
-FROM v
-WHERE rn <= @MaxViewsPerSchema;
+    COUNT(*) AS ViewsToProfile,
+    SUM(ColumnCount) AS TotalColumns
+FROM #ViewsToProfile
+GROUP BY SchemaName
+ORDER BY SchemaName;
 
 ------------------------------------------------------------
 -- OUTPUT TABLES
@@ -354,14 +355,19 @@ DECLARE @objid INT;
 DECLARE @sql NVARCHAR(MAX);
 DECLARE @colSql NVARCHAR(MAX);
 DECLARE @start DATETIME;
+DECLARE @elapsed INT;
+DECLARE @counter INT = 1;
+DECLARE @total INT;
 
-WHILE EXISTS (SELECT 1 FROM #ViewsToProfile)
+SELECT @total = COUNT(*) FROM #ViewsToProfile;
+
+WHILE @counter <= @total
 BEGIN
-    SELECT TOP (1)
+    SELECT
         @schema = SchemaName,
         @view = ViewName
     FROM #ViewsToProfile
-    ORDER BY RowNum;
+    WHERE RowNum = @counter;
 
     SET @start = GETDATE();
     SET @colSql = N'';
@@ -371,26 +377,24 @@ BEGIN
         SELECT @colSql = @colSql +
             CASE WHEN @colSql = N'' THEN N'' ELSE N' UNION ALL ' END +
             N'SELECT ' +
-            N'''' + REPLACE(@schema,'''','''''') + N''' AS SchemaName, ' +
-            N'''' + REPLACE(@view,'''','''''') + N''' AS ViewName, ' +
-            N'''' + REPLACE(c.name,'''','''''') + N''' AS ColumnName, ' +
+            N'''' + REPLACE(@schema, '''', '''''') + N''' AS SchemaName, ' +
+            N'''' + REPLACE(@view, '''', '''''') + N''' AS ViewName, ' +
+            N'''' + REPLACE(c.name, '''', '''''') + N''' AS ColumnName, ' +
             N'''' +
-                REPLACE(
-                    t.name +
-                    CASE
-                        WHEN t.name IN ('varchar','char')
-                            THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length AS VARCHAR(10)) END + ')'
-                        WHEN t.name IN ('nvarchar','nchar')
-                            THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length / 2 AS VARCHAR(10)) END + ')'
-                        WHEN t.name IN ('decimal','numeric')
-                            THEN '(' + CAST(c.precision AS VARCHAR(10)) + ',' + CAST(c.scale AS VARCHAR(10)) + ')'
-                        ELSE ''
-                    END
-                ,'''','''''') +
+                t.name +
+                CASE
+                    WHEN t.name IN ('varchar','char')
+                        THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length AS VARCHAR(10)) END + ')'
+                    WHEN t.name IN ('nvarchar','nchar')
+                        THEN '(' + CASE WHEN c.max_length = -1 THEN 'MAX' ELSE CAST(c.max_length / 2 AS VARCHAR(10)) END + ')'
+                    WHEN t.name IN ('decimal','numeric')
+                        THEN '(' + CAST(c.precision AS VARCHAR(10)) + ',' + CAST(c.scale AS VARCHAR(10)) + ')'
+                    ELSE ''
+                END +
             N''' AS DataType, ' +
             N'COUNT(*) AS SampledRows, ' +
             N'SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) AS NullCount, ' +
-            N'CAST(100.0 * SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0) AS DECIMAL(5,2)) AS NullPct, ' +
+            N'CAST(100.0 * SUM(CASE WHEN ' + QUOTENAME(c.name) + N' IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0) AS DECIMAL(5,2)) AS NullPct, ' +
             N'COUNT(DISTINCT ' + QUOTENAME(c.name) + N') AS DistinctCount, ' +
             CASE
                 WHEN t.name IN ('text','ntext','image','xml','varbinary','binary','geography','geometry','hierarchyid')
@@ -399,8 +403,8 @@ BEGIN
                     THEN N'CONVERT(NVARCHAR(50), MIN(' + QUOTENAME(c.name) + N'), 121) AS MinValue, ' +
                          N'CONVERT(NVARCHAR(50), MAX(' + QUOTENAME(c.name) + N'), 121) AS MaxValue, '
                 WHEN t.name IN ('varchar','nvarchar','char','nchar')
-                    THEN N'LEFT(MIN(CAST(' + QUOTENAME(c.name) + N' AS NVARCHAR(200))),200) AS MinValue, ' +
-                         N'LEFT(MAX(CAST(' + QUOTENAME(c.name) + N' AS NVARCHAR(200))),200) AS MaxValue, '
+                    THEN N'LEFT(MIN(CAST(' + QUOTENAME(c.name) + N' AS NVARCHAR(200))), 200) AS MinValue, ' +
+                         N'LEFT(MAX(CAST(' + QUOTENAME(c.name) + N' AS NVARCHAR(200))), 200) AS MaxValue, '
                 ELSE
                     N'CAST(MIN(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)) AS MinValue, ' +
                     N'CAST(MAX(' + QUOTENAME(c.name) + N') AS NVARCHAR(200)) AS MaxValue, '
@@ -414,45 +418,34 @@ BEGIN
             N'CAST(NULL AS NVARCHAR(2000)) AS ErrorMsg ' +
             N'FROM #Sample'
         FROM sys.columns c
-        JOIN sys.types t
-            ON c.user_type_id = t.user_type_id
+        JOIN sys.types t ON c.user_type_id = t.user_type_id
         WHERE c.object_id = @objid
-          AND c.is_computed = 0
         ORDER BY c.column_id;
 
         IF @colSql IS NOT NULL AND LEN(@colSql) > 0
         BEGIN
-            SET @sql = N'
-IF OBJECT_ID(''tempdb..#Sample'') IS NOT NULL DROP TABLE #Sample;
-
-SELECT TOP (' + CAST(@MaxRows AS VARCHAR(20)) + N') *
-INTO #Sample
-FROM ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@view) + N'
-WHERE ABS(CHECKSUM(NEWID())) % 100 < ' + CAST(@SamplePct AS VARCHAR(10)) + N';
-
-INSERT INTO #ViewProfile
-(
-    SchemaName, ViewName, ColumnName, DataType,
-    SampledRows, NullCount, NullPct, DistinctCount,
-    MinValue, MaxValue, BlankCount, ErrorMsg
-)
-' + @colSql + N';
-
-DROP TABLE #Sample;';
+            SET @sql =
+                N'IF OBJECT_ID(''tempdb..#Sample'') IS NOT NULL DROP TABLE #Sample; ' +
+                N'SELECT TOP (' + CAST(@MaxRows AS NVARCHAR(20)) + N') * ' +
+                N'INTO #Sample ' +
+                N'FROM ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@view) + N' ' +
+                N'WHERE ABS(CHECKSUM(NEWID())) % 100 < ' + CAST(@SamplePct AS NVARCHAR(10)) + N'; ' +
+                N'INSERT INTO #ViewProfile (SchemaName, ViewName, ColumnName, DataType, SampledRows, NullCount, NullPct, DistinctCount, MinValue, MaxValue, BlankCount, ErrorMsg) ' +
+                @colSql + N'; ' +
+                N'DROP TABLE #Sample;';
 
             EXEC sp_executesql @sql;
 
-            INSERT INTO #ViewStatus
-            (
-                SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg
-            )
+            SET @elapsed = DATEDIFF(SECOND, @start, GETDATE());
+
+            INSERT INTO #ViewStatus (SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg)
             SELECT
                 @schema,
                 @view,
                 ISNULL(MAX(SampledRows), 0),
                 COUNT(*),
-                DATEDIFF(SECOND, @start, GETDATE()),
-                N''OK'',
+                @elapsed,
+                'OK',
                 NULL
             FROM #ViewProfile
             WHERE SchemaName = @schema
@@ -460,80 +453,40 @@ DROP TABLE #Sample;';
         END
         ELSE
         BEGIN
-            INSERT INTO #ViewStatus
-            (
-                SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg
-            )
-            VALUES
-            (
-                @schema,
-                @view,
-                NULL,
-                NULL,
-                DATEDIFF(SECOND, @start, GETDATE()),
-                N'ERROR',
-                N'No columns found for object'
-            );
+            SET @elapsed = DATEDIFF(SECOND, @start, GETDATE());
+            INSERT INTO #ViewStatus (SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg)
+            VALUES (@schema, @view, NULL, NULL, @elapsed, 'ERROR', 'No columns found');
         END
     END TRY
     BEGIN CATCH
         IF OBJECT_ID('tempdb..#Sample') IS NOT NULL DROP TABLE #Sample;
 
-        INSERT INTO #ViewStatus
-        (
-            SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg
-        )
-        VALUES
-        (
-            @schema,
-            @view,
-            NULL,
-            NULL,
-            DATEDIFF(SECOND, @start, GETDATE()),
-            N'ERROR',
-            LEFT(ERROR_MESSAGE(), 2000)
-        );
-    END CATCH;
+        SET @elapsed = DATEDIFF(SECOND, @start, GETDATE());
+        INSERT INTO #ViewStatus (SchemaName, ViewName, SampledRows, ColumnsCnt, SecondsTaken, Status, ErrorMsg)
+        VALUES (@schema, @view, NULL, NULL, @elapsed, 'ERROR', LEFT(ERROR_MESSAGE(), 2000));
+    END CATCH
 
-    PRINT N'Done: ' + @schema + N'.' + @view + N' (' + CAST(DATEDIFF(SECOND, @start, GETDATE()) AS NVARCHAR(20)) + N' sec)';
-
-    DELETE FROM #ViewsToProfile
-    WHERE SchemaName = @schema
-      AND ViewName = @view;
-END;
+    SET @counter = @counter + 1;
+END
 
 ------------------------------------------------------------
 -- REPORTS
 ------------------------------------------------------------
 
-SELECT *
-FROM #ViewStatus
-ORDER BY SchemaName, ViewName;
+SELECT * FROM #ViewStatus ORDER BY SchemaName, ViewName;
 
-SELECT *
-FROM #ViewProfile
-WHERE ErrorMsg IS NULL
+SELECT * FROM #ViewProfile WHERE ErrorMsg IS NULL ORDER BY SchemaName, ViewName, ColumnName;
+
+SELECT SchemaName, ViewName, ColumnName, DataType, SampledRows
+FROM #ViewProfile WHERE NullPct = 100 AND SampledRows > 0
 ORDER BY SchemaName, ViewName, ColumnName;
 
-SELECT
-    SchemaName, ViewName, ColumnName, DataType, SampledRows
-FROM #ViewProfile
-WHERE NullPct = 100
-  AND SampledRows > 0
-ORDER BY SchemaName, ViewName, ColumnName;
-
-SELECT
-    SchemaName, ViewName, ColumnName, DataType, DistinctCount, SampledRows
-FROM #ViewProfile
-WHERE DistinctCount BETWEEN 1 AND 20
-  AND SampledRows > 0
+SELECT SchemaName, ViewName, ColumnName, DataType, DistinctCount, SampledRows
+FROM #ViewProfile WHERE DistinctCount BETWEEN 1 AND 20 AND SampledRows > 0
 ORDER BY DistinctCount, SchemaName, ViewName, ColumnName;
 
-SELECT
-    SchemaName, ViewName, ColumnName, MinValue, MaxValue
-FROM #ViewProfile
-WHERE DataType LIKE '%date%'
-   OR DataType LIKE '%time%'
+SELECT SchemaName, ViewName, ColumnName, MinValue, MaxValue
+FROM #ViewProfile WHERE DataType LIKE '%date%' OR DataType LIKE '%time%'
 ORDER BY SchemaName, ViewName, ColumnName;
 
 SELECT
@@ -542,10 +495,10 @@ SELECT
     SampledRows,
     CASE
         WHEN SampledRows >= @MaxRows
-            THEN '>' + CONVERT(VARCHAR(30), @MaxRows * (100 / NULLIF(@SamplePct,0))) + '+'
-        ELSE '~' + CONVERT(VARCHAR(30), SampledRows * (100 / NULLIF(@SamplePct,0)))
+            THEN '>' + CAST(@MaxRows * (100 / NULLIF(@SamplePct, 0)) AS VARCHAR(30)) + '+'
+        ELSE '~' + CAST(SampledRows * (100 / NULLIF(@SamplePct, 0)) AS VARCHAR(30))
     END AS EstRowCount
 FROM #ViewStatus
 WHERE Status = 'OK'
-ORDER BY SampledRows DESC, SchemaName, ViewName;
+ORDER BY SampledRows DESC;
 ```
