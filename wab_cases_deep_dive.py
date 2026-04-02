@@ -181,26 +181,15 @@ def prepare_cases(cases):
     else:
         df["_is_resolved"] = True  # assume resolved if no status
 
-    # ── Derived: 3-way population classification ──
-    # named_client  = has company name, not admin
-    # blank_client   = company blank (CRM default assignment failed — confirmed client emails)
-    # admin          = AAB ADMIN / WAB ADMIN (multi-client or operational)
+    # ── Derived: is_internal ──
     src_co = col_map.get("company")
     if src_co:
         df["_company_clean"] = df[src_co].fillna("(blank)").astype(str).str.strip()
-        _upper = df["_company_clean"].str.upper()
-        df["_is_admin"] = _upper.apply(lambda x: any(x.startswith(kw) for kw in INTERNAL_COMPANIES))
-        df["_is_blank_company"] = (_upper == "(BLANK)") | (df["_company_clean"] == "")
-        df["_case_population"] = "named_client"
-        df.loc[df["_is_blank_company"], "_case_population"] = "blank_client"
-        df.loc[df["_is_admin"], "_case_population"] = "admin"
-        # _is_internal now means admin ONLY (blank cases are client)
-        df["_is_internal"] = df["_is_admin"]
+        df["_is_internal"] = df["_company_clean"].str.upper().apply(
+            lambda x: any(x.startswith(kw) for kw in INTERNAL_COMPANIES) or x == "(BLANK)"
+        )
     else:
         df["_is_internal"] = False
-        df["_is_admin"] = False
-        df["_is_blank_company"] = False
-        df["_case_population"] = "named_client"
 
     # ── Derived: subject clean ──
     src_subj = col_map.get("subject")
@@ -229,17 +218,11 @@ def prepare_cases(cases):
         now = pd.Timestamp.now()
         df["_age_hours"] = (now - df["_created_on_dt"]).dt.total_seconds() / 3600
 
-    # ── Derived: owner clean ──
-    src_own = col_map.get("owner")
-    if src_own:
-        df["_owner"] = df[src_own].fillna("(blank)").astype(str).str.strip()
-
-    # ── Derived: text lengths + text content ──
+    # ── Derived: text lengths ──
     for key in ["description", "activity_subj"]:
         src = col_map.get(key)
         if src:
             df[f"_{key}_len"] = df[src].fillna("").astype(str).str.len()
-            df[f"_{key}_text"] = df[src].fillna("").astype(str).str.strip()
 
     df._col_map = col_map
     return df
@@ -250,12 +233,10 @@ def prepare_cases(cases):
 # ═══════════════════════════════════════════════════════════
 
 def sheet_01_population_split(df):
-    """D01: 3-way population split — named client, blank-company client, admin."""
+    """D01: Client vs internal case split with headline metrics."""
     total = len(df)
-    named   = df[df["_case_population"] == "named_client"]
-    blank   = df[df["_case_population"] == "blank_client"]
-    admin   = df[df["_case_population"] == "admin"]
-    client_inclusive = df[~df["_is_internal"]]  # named + blank
+    client = df[~df["_is_internal"]]
+    internal = df[df["_is_internal"]]
 
     def _stats(subset, label):
         n = len(subset)
@@ -276,19 +257,17 @@ def sheet_01_population_split(df):
         top_subj = subset["_subject"].value_counts().head(5)
         for s, c in top_subj.items():
             rows.append({"section": label, "metric": f"top_subject: {s}", "value": f"{c:,}"})
-
-        # origin distribution (key for validating blank = client)
-        if "_origin" in subset.columns:
-            top_orig = subset["_origin"].value_counts().head(3)
-            for o, c in top_orig.items():
-                rows.append({"section": label, "metric": f"top_origin: {o}", "value": f"{c:,} ({pct(c, n)})"})
         return rows
 
     rows = _stats(df, "ALL CASES")
-    rows += _stats(client_inclusive, "CLIENT INCLUSIVE (named+blank)")
-    rows += _stats(named, "NAMED CLIENT")
-    rows += _stats(blank, "BLANK COMPANY (unassigned client)")
-    rows += _stats(admin, "ADMIN / MULTI-CLIENT")
+    rows += _stats(client, "CLIENT ONLY")
+    rows += _stats(internal, "INTERNAL / SYSTEM")
+
+    # internal company breakdown
+    if "_company_clean" in internal.columns:
+        co_dist = internal["_company_clean"].value_counts().head(5)
+        for co, c in co_dist.items():
+            rows.append({"section": "INTERNAL BREAKDOWN", "metric": co, "value": f"{c:,}"})
 
     return pd.DataFrame(rows)
 
@@ -919,6 +898,161 @@ def sheet_15_genai_evidence(df, edf):
     return pd.DataFrame(rows)
 
 
+def sheet_17_usecase_evidence(df):
+    """D17: Targeted evidence for the 4 ops use cases presented to leadership.
+
+    Section A — FTE-hours by subject  (supports all 4 UCs)
+    Section B — Research Activity Subject top terms  (UC3: Payment Research Copilot)
+    Section C — New Account combined view  (UC4: Onboarding Document Review)
+    Section D — Triage volume by subject  (UC1: Case Intake & Routing)
+    """
+    client = df[~df["_is_internal"]].copy()
+    WEEKS = 14  # 3-month window = ~14 weeks
+
+    parts = []
+
+    # ── A: FTE-hours by subject ──────────────────────────────
+    # total_hours = count × median_hrs; weekly = total / WEEKS
+    # Shows ROI target: which subjects burn the most banker time
+    if "_hours" in client.columns:
+        grp = client.groupby("_subject")
+        counts = grp.size().rename("count")
+        medians = grp["_hours"].median().rename("median_hrs")
+        summary = pd.concat([counts, medians], axis=1).reset_index()
+        summary["total_hrs_3mo"] = (summary["count"] * summary["median_hrs"]).round(0).astype(int)
+        summary["fte_hrs_per_week"] = (summary["total_hrs_3mo"] / WEEKS).round(1)
+        summary = summary.sort_values("total_hrs_3mo", ascending=False).head(15)
+        summary.rename(columns={"_subject": "subject"}, inplace=True)
+        summary.insert(0, "section", "A: FTE-HOURS BY SUBJECT")
+        summary["note"] = summary.apply(
+            lambda r: f"~{r['fte_hrs_per_week']:.0f} FTE-hrs/week across {r['count']:,} cases", axis=1)
+        parts.append(summary[["section", "subject", "count", "median_hrs",
+                               "total_hrs_3mo", "fte_hrs_per_week", "note"]])
+
+    # ── B: Research — top Activity Subject terms ─────────────
+    # Simple term frequency on Activity Subject for Research cases only.
+    # Reveals sub-types (payment trace, ACH, wire, dispute, etc.)
+    act_src = None
+    for c in client.columns:
+        if "activity" in c.lower() and "subj" in c.lower():
+            act_src = c
+            break
+
+    research = client[client["_subject"].str.lower() == "research"].copy()
+    if act_src and len(research) > 0:
+        # tokenise: lower, split on spaces/punctuation, drop short/stopwords
+        STOP = {"the", "a", "an", "and", "or", "for", "to", "of", "in", "is",
+                "on", "at", "by", "re", "fw", "fwd", "re:", "fw:", "fwd:",
+                "from", "with", "this", "that", "your", "our", "we", "i",
+                "please", "thank", "you", "hi", "hello", "dear"}
+        from collections import Counter
+        tok_counter = Counter()
+        for val in research[act_src].fillna("").astype(str):
+            tokens = re.findall(r"[a-zA-Z]{3,}", val.lower())
+            for t in tokens:
+                if t not in STOP:
+                    tok_counter[t] += 1
+        top_terms = tok_counter.most_common(25)
+        term_df = pd.DataFrame(top_terms, columns=["term", "frequency"])
+        n_research = len(research)
+        term_df["pct_of_research_cases"] = (term_df["frequency"] / n_research * 100).round(1).astype(str) + "%"
+        term_df.insert(0, "section", "B: RESEARCH ACTIVITY SUBJECT TERMS")
+        term_df["note"] = "High-frequency terms reveal sub-workflows (e.g. 'payment','trace','ACH','wire')"
+        parts.append(term_df)
+
+    # ── C: New Account combined view ─────────────────────────
+    # New Account Request + New Account Child Case = one onboarding workflow
+    # Show combined volume, resolution bands, and description fill
+    na_subjects = ["New Account Request", "New Account Child Case"]
+    na = client[client["_subject"].isin(na_subjects)].copy()
+    if len(na) > 0:
+        # overall combined stats
+        combined_rows = []
+        combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                               "metric": "total_cases_3mo",
+                               "value": f"{len(na):,}",
+                               "note": "New Account Request + Child Case = one workflow"})
+        combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                               "metric": "pct_of_all_client_cases",
+                               "value": pct(len(na), len(client)),
+                               "note": "Share of total ops workload"})
+        if "_hours" in na.columns:
+            hrs = na["_hours"].dropna()
+            combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                                   "metric": "median_resolution_hrs",
+                                   "value": f"{hrs.median():.1f}",
+                                   "note": ""})
+            combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                                   "metric": "p90_resolution_hrs",
+                                   "value": f"{hrs.quantile(0.9):.1f}",
+                                   "note": "10% of onboarding cases take this long"})
+            # resolution bands — key for onboarding doc-delay argument
+            bands = [
+                ("<1 day",    hrs[hrs < 24].count()),
+                ("1–3 days",  hrs[(hrs >= 24) & (hrs < 72)].count()),
+                ("3–7 days",  hrs[(hrs >= 72) & (hrs < 168)].count()),
+                (">7 days",   hrs[hrs >= 168].count()),
+            ]
+            for label, cnt in bands:
+                combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                                       "metric": f"resolved_{label.replace(' ', '_')}",
+                                       "value": f"{cnt:,} ({pct(cnt, len(hrs))})",
+                                       "note": "Resolution time band"})
+        if "_description_len" in na.columns:
+            no_desc = (na["_description_len"] == 0).sum()
+            combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                                   "metric": "cases_with_no_description",
+                                   "value": f"{no_desc:,} ({pct(no_desc, len(na))})",
+                                   "note": "No description = no doc info captured at intake"})
+        unres_na = (~na["_is_resolved"]).sum()
+        combined_rows.append({"section": "C: NEW ACCOUNT COMBINED",
+                               "metric": "currently_unresolved",
+                               "value": f"{unres_na:,}",
+                               "note": "Open onboarding cases = blocked revenue"})
+        # per-subject breakdown within combined view
+        for subj in na_subjects:
+            sub = na[na["_subject"] == subj]
+            if len(sub) == 0:
+                continue
+            combined_rows.append({"section": f"  → {subj}",
+                                   "metric": "count",
+                                   "value": f"{len(sub):,}",
+                                   "note": f"median {sub['_hours'].median():.1f}h  |  "
+                                           f"p90 {sub['_hours'].quantile(0.9):.1f}h  |  "
+                                           f"unresolved {(~sub['_is_resolved']).sum():,}"
+                                           if "_hours" in sub.columns else ""})
+        parts.append(pd.DataFrame(combined_rows))
+
+    # ── D: Triage volume by subject ───────────────────────────
+    # How many cases per subject have a meaningful triage gap (>30 sec)?
+    # Quantifies the routing problem per workflow.
+    if "_sla_start_dt" in client.columns and "_created_on_dt" in client.columns:
+        valid = client.dropna(subset=["_sla_start_dt", "_created_on_dt"]).copy()
+        valid["_triage_min"] = (
+            valid["_created_on_dt"] - valid["_sla_start_dt"]
+        ).dt.total_seconds() / 60
+        gapped = valid[(valid["_triage_min"] > 0.5) & (valid["_triage_min"] < 10080)]
+
+        triage_by_subj = gapped.groupby("_subject").agg(
+            cases_with_gap=("_triage_min", "size"),
+            median_triage_min=("_triage_min", "median"),
+            p90_triage_min=("_triage_min", lambda x: x.quantile(0.9)),
+        ).reset_index()
+        triage_by_subj["median_triage_min"] = triage_by_subj["median_triage_min"].round(1)
+        triage_by_subj["p90_triage_min"] = triage_by_subj["p90_triage_min"].round(1)
+        # weekly cases in queue
+        triage_by_subj["cases_in_queue_per_week"] = (triage_by_subj["cases_with_gap"] / WEEKS).round(1)
+        triage_by_subj = triage_by_subj.sort_values("cases_with_gap", ascending=False).head(15)
+        triage_by_subj.rename(columns={"_subject": "subject"}, inplace=True)
+        triage_by_subj.insert(0, "section", "D: TRIAGE GAP BY SUBJECT")
+        parts.append(triage_by_subj)
+
+    if not parts:
+        return pd.DataFrame({"note": ["Insufficient data for D17"]})
+
+    return pd.concat(parts, ignore_index=True)
+
+
 def sheet_16_triage_delay(df):
     """D16: Email-to-case triage delay — gap between SLA Start and Created On.
 
@@ -1031,310 +1165,6 @@ def sheet_16_triage_delay(df):
 
 
 # ═══════════════════════════════════════════════════════════
-#  D17-D21: SUBJECT INTELLIGENCE (folded from subject deep dive)
-# ═══════════════════════════════════════════════════════════
-
-# Action-tag rules
-ACTION_RULES = {
-    "CD Maintenance": "MONITOR", "IntraFi Maintenance": "MONITOR",
-    "NSF and Non-Post": "AUTOMATE", "Fraud Alert": "AUTOMATE",
-    "Transfer": "AUTOMATE", "Statements": "AI-ASSIST",
-    "Signature Card": "REDESIGN", "Close Account": "REDESIGN",
-    "Research": "AI-ASSIST", "New Account Request": "AI-ASSIST",
-    "Account Maintenance": "AI-ASSIST", "General Questions": "AI-ASSIST",
-}
-
-def _action_tag(subject, median_hrs, unres_pct, cpw, top_owner_pct, p90_med_ratio):
-    for pattern, tag in ACTION_RULES.items():
-        if pattern.lower() in subject.lower():
-            return tag
-    if pd.notna(median_hrs) and median_hrs < 4 and pd.notna(cpw) and cpw > 15:
-        return "AUTOMATE"
-    if pd.notna(unres_pct) and unres_pct > 10 and pd.notna(top_owner_pct) and top_owner_pct > 40:
-        return "REDESIGN"
-    if pd.notna(p90_med_ratio) and p90_med_ratio >= 10:
-        return "AI-ASSIST"
-    if pd.notna(cpw) and cpw < 5:
-        return "DEPRIORITIZE"
-    return "MONITOR"
-
-def _research_cluster(desc, act_subj):
-    combined = f"{desc} {act_subj}".lower()
-    if any(k in combined for k in ["payment","ach","wire","transfer","deposit",
-                                    "credit","debit","transaction","posted","posting",
-                                    "return","reversal","refund"]):
-        return "Payment Research"
-    if any(k in combined for k in ["check","cheque","item","image","copy","front","back","clearing"]):
-        return "Check/Item Research"
-    if any(k in combined for k in ["statement","balance","reconcil","ledger","interest","rate","fee"]):
-        return "Statement/Balance Inquiry"
-    if any(k in combined for k in ["address","signer","name change","update","modify","amendment",
-                                    "tin","ein","ssn","tax","w-9","w9","certification",
-                                    "fraud","dispute","unauthorized","suspicious",
-                                    "positive pay","stop payment",
-                                    "new account","onboard","setup","opening"]):
-        return "Account Updates & Other"
-    if len(combined.strip()) < 10:
-        return "No Text (Unclassifiable)"
-    return "Other/Uncategorized"
-
-
-def sheet_17_banker_hours(df):
-    """D17: Banker-hours budget per subject with work/wait split and action tags."""
-    client = df[~df["_is_internal"]].copy()
-    if "_hours" not in client.columns:
-        return pd.DataFrame({"note": ["Hours column not available"]})
-
-    n_weeks = max(client["_week"].nunique(), 1) if "_week" in client.columns else 13
-    top_subjects = client["_subject"].value_counts().head(25).index.tolist()
-    wait_subjects = {"cd maintenance", "intrafi maintenance"}
-
-    rows = []
-    for subj in top_subjects:
-        s = client[client["_subject"] == subj]
-        n = len(s)
-        hrs = s["_hours"].dropna()
-        total_hrs = hrs.sum()
-        weekly_hrs = total_hrs / n_weeks
-        cpw = n / n_weeks
-        med = hrs.median() if len(hrs) > 0 else np.nan
-        unres = (~s["_is_resolved"]).sum()
-        unres_pct = round(100 * unres / n, 1) if n > 0 else 0
-        n_owners = s["_owner"].nunique() if "_owner" in s.columns else 0
-        top_own_pct = round(100 * s["_owner"].value_counts().iloc[0] / n, 1) if n > 0 and "_owner" in s.columns else 0
-        p90 = hrs.quantile(0.9) if len(hrs) > 0 else np.nan
-        p90_med = round(p90 / max(med, 0.1), 1) if pd.notna(med) and pd.notna(p90) and med > 0 else np.nan
-
-        is_wait = subj.lower() in wait_subjects
-        action = _action_tag(subj, med, unres_pct, cpw, top_own_pct, p90_med)
-
-        rows.append({
-            "subject": subj, "intervention": action,
-            "total_cases": n, "cases_per_week": round(cpw, 1),
-            "median_hrs_per_case": round(med, 1) if pd.notna(med) else np.nan,
-            "est_banker_hrs_per_week": round(weekly_hrs, 1),
-            "hours_type": "WAIT TIME" if is_wait else "WORK TIME",
-            "est_recoverable_hrs_per_week": 0 if is_wait else round(weekly_hrs * 0.6, 1),
-            "current_unresolved": int(unres),
-            "distinct_owners": n_owners,
-        })
-
-    result = pd.DataFrame(rows).sort_values("est_banker_hrs_per_week", ascending=False)
-    totals = {
-        "subject": "=== TOTAL (top 25) ===",
-        "total_cases": result["total_cases"].sum(),
-        "cases_per_week": round(result["cases_per_week"].sum(), 1),
-        "est_banker_hrs_per_week": round(result["est_banker_hrs_per_week"].sum(), 1),
-        "est_recoverable_hrs_per_week": round(result["est_recoverable_hrs_per_week"].sum(), 1),
-    }
-    return pd.concat([result, pd.DataFrame([totals])], ignore_index=True)
-
-
-def sheet_18_claim_check(df):
-    """D18: Chris March 23 claims tested against data."""
-    client = df[~df["_is_internal"]].copy()
-    n_weeks = max(client["_week"].nunique(), 1) if "_week" in client.columns else 13
-    rows = []
-
-    # CD Maintenance
-    cd = client[client["_subject"].str.contains("CD Maintenance", case=False, na=False)]
-    cd_hrs = cd["_hours"].dropna()
-    cd_med = round(cd_hrs.median(), 1) if len(cd_hrs) > 0 else np.nan
-    cd_p25 = round(cd_hrs.quantile(0.25), 1) if len(cd_hrs) > 0 else np.nan
-    cd_7_14 = round(100 * ((cd_hrs >= 168) & (cd_hrs <= 336)).sum() / max(len(cd_hrs), 1), 1)
-    rows.append({
-        "claim": "CD Maintenance ~98h median is by design (maturity wait)",
-        "source": "Chris, March 23",
-        "data_finding": f"Median {cd_med}h. P25={cd_p25}h (even fast cases >1d). {cd_7_14}% in 7-14d maturity window.",
-        "verdict": "CONFIRMED" if pd.notna(cd_p25) and cd_p25 > 12 else "PARTIALLY CONFIRMED",
-        "implication": "Not a speed target. Wait time, not work time. Exclude from automation ROI.",
-    })
-
-    # Signature Card
-    sig = client[client["_subject"].str.contains("Signature Card", case=False, na=False)]
-    sig_unres = (~sig["_is_resolved"]).sum()
-    sig_unres_pct = round(100 * sig_unres / max(len(sig), 1), 1)
-    sig_vc = sig["_owner"].value_counts() if "_owner" in sig.columns else pd.Series(dtype=int)
-    sig_top = sig_vc.index[0] if len(sig_vc) > 0 else "unknown"
-    sig_top_pct = round(100 * sig_vc.iloc[0] / max(len(sig), 1), 1) if len(sig_vc) > 0 else 0
-    sig_old = (sig[~sig["_is_resolved"]]["_age_hours"] > 720).sum() if "_age_hours" in sig.columns else 0
-    rows.append({
-        "claim": "Signature Card has large backlog; board member changes drive volume",
-        "source": "Chris, March 23",
-        "data_finding": f"{len(sig):,} cases, {sig_unres:,} unresolved ({sig_unres_pct}%). Top owner: {sig_top} at {sig_top_pct}%. {sig_old} unresolved >30d.",
-        "verdict": "CONFIRMED" if sig_unres_pct > 10 else "PARTIALLY CONFIRMED",
-        "implication": f"Backlog real at {sig_unres_pct}% unresolved. Board member change automation is the intervention.",
-    })
-
-    # Research catch-all
-    research = client[client["_subject"] == "Research"]
-    r_n = len(research)
-    r_desc_fill = round(100 * (research.get("_description_len", pd.Series(dtype=int)) > 0).mean(), 0) if r_n > 0 else 0
-    rows.append({
-        "claim": "Research is a catch-all — 'a lot of different things go into it'",
-        "source": "Chris, March 23",
-        "data_finding": f"{r_n:,} cases. Description fill: {r_desc_fill}%. Keyword clustering yields 5 sub-types; Payment Research dominates (~40%).",
-        "verdict": "CONFIRMED",
-        "implication": "Can be split into ~5 actionable sub-types. Sub-segmentation enables targeted routing.",
-    })
-
-    # NSF/Non-Post
-    nsf = client[client["_subject"].str.contains("NSF|Non.?Post", case=False, na=False)]
-    nsf_hrs = nsf["_hours"].dropna()
-    nsf_daily = nsf_hrs.sum() / (n_weeks * 5) if n_weeks > 0 else 0
-    nsf_owners = nsf["_owner"].nunique() if "_owner" in nsf.columns else 1
-    nsf_per_owner = round(nsf_daily / max(nsf_owners, 1), 1)
-    rows.append({
-        "claim": "NSF/Non-Post consumes 2-3 hours of every banker's time daily",
-        "source": "Chris, March 23",
-        "data_finding": f"{len(nsf):,} cases. ~{nsf_per_owner}h/owner/day across {nsf_owners} owners.",
-        "verdict": "CONFIRMED" if 1.0 <= nsf_per_owner <= 4.0 else "PARTIALLY CONFIRMED",
-        "implication": f"Data shows ~{nsf_per_owner}h/owner/day. Positive Pay adoption is the structural fix.",
-    })
-
-    # Close Account
-    close = client[client["_subject"].str.contains("Clos", case=False, na=False)]
-    close_hrs = close["_hours"].dropna()
-    close_med = round(close_hrs.median(), 1) if len(close_hrs) > 0 else np.nan
-    close_p90 = round(close_hrs.quantile(0.9), 1) if len(close_hrs) > 0 else np.nan
-    rows.append({
-        "claim": "Close Account requires manual cross-system checklist (IBS, BST, ACH)",
-        "source": "Chris, March 23",
-        "data_finding": f"{len(close):,} cases. Median {close_med}h, P90 {close_p90}h. Long tail consistent with multi-step process.",
-        "verdict": "PARTIALLY CONFIRMED",
-        "implication": "CRM consolidation is the right approach. Not a near-term AI target.",
-    })
-
-    return pd.DataFrame(rows)
-
-
-def sheet_19_research_breakdown(df):
-    """D19: Research sub-segmentation into 5 actionable types."""
-    client = df[~df["_is_internal"]].copy()
-    research = client[client["_subject"] == "Research"].copy()
-    if len(research) == 0:
-        return pd.DataFrame({"note": ["No Research cases"]})
-
-    desc_col = "_description_text" if "_description_text" in research.columns else None
-    act_col = "_activity_subj_text" if "_activity_subj_text" in research.columns else None
-
-    research["_cluster"] = research.apply(
-        lambda r: _research_cluster(
-            r.get(desc_col, "") if desc_col else "",
-            r.get(act_col, "") if act_col else "",
-        ), axis=1
-    )
-
-    grp = research.groupby("_cluster")
-    result = grp.size().reset_index(name="cases")
-    result["pct"] = (result["cases"] / len(research) * 100).round(1)
-    result = result.sort_values("cases", ascending=False)
-
-    if "_hours" in research.columns:
-        hrs = grp["_hours"].agg(
-            median_hrs="median", p90_hrs=lambda x: x.quantile(0.9) if len(x) else np.nan,
-        ).reset_index()
-        hrs["median_hrs"] = hrs["median_hrs"].round(1)
-        hrs["p90_hrs"] = hrs["p90_hrs"].round(1)
-        result = result.merge(hrs, on="_cluster", how="left")
-
-    if "_is_resolved" in research.columns:
-        unres = grp["_is_resolved"].agg(
-            unresolved=lambda x: int((~x).sum()),
-            pct_unresolved=lambda x: round(100 * (~x).mean(), 1),
-        ).reset_index()
-        result = result.merge(unres, on="_cluster", how="left")
-
-    if "_owner" in research.columns:
-        ow = grp["_owner"].agg(
-            distinct_owners=lambda x: x.nunique(),
-            top_owner=lambda x: x.value_counts().index[0] if len(x) > 0 else "",
-            top_owner_pct=lambda x: round(100 * x.value_counts().iloc[0] / len(x), 1) if len(x) > 0 else 0,
-        ).reset_index()
-        result = result.merge(ow, on="_cluster", how="left")
-
-    result.rename(columns={"_cluster": "cluster"}, inplace=True)
-    return result.reset_index(drop=True)
-
-
-def sheet_20_key_person_risk(df):
-    """D20: Subjects where one owner handles >35% — SPOF risk."""
-    client = df[~df["_is_internal"]].copy()
-    if "_owner" not in client.columns:
-        return pd.DataFrame({"note": ["Owner column not found"]})
-
-    subj_counts = client["_subject"].value_counts()
-    big = subj_counts[subj_counts >= 20].index.tolist()
-
-    rows = []
-    for subj in big:
-        s = client[client["_subject"] == subj]
-        n = len(s)
-        vc = s["_owner"].value_counts()
-        if len(vc) == 0:
-            continue
-        top1 = vc.index[0]
-        top1_pct = round(100 * vc.iloc[0] / n, 1)
-        if top1_pct < 35:
-            continue
-
-        top_hrs = s[s["_owner"] == top1]["_hours"].dropna()
-        rest_hrs = s[s["_owner"] != top1]["_hours"].dropna()
-        top_med = round(top_hrs.median(), 1) if len(top_hrs) > 0 else np.nan
-        rest_med = round(rest_hrs.median(), 1) if len(rest_hrs) > 0 else np.nan
-        speed = ""
-        if pd.notna(top_med) and pd.notna(rest_med) and rest_med > 0:
-            speed = "Faster than peers" if top_med < rest_med * 0.85 else (
-                "Slower than peers" if top_med > rest_med * 1.15 else "Similar to peers")
-
-        rows.append({
-            "subject": subj, "cases": n,
-            "key_person": top1, "key_person_pct": top1_pct,
-            "risk_level": "YES" if top1_pct > 50 else "WATCH",
-            "key_person_median_hrs": top_med, "others_median_hrs": rest_med,
-            "speed_note": speed,
-            "impact_if_absent": f"{int(top1_pct * n / 100):,} cases would need reassignment",
-        })
-
-    result = pd.DataFrame(rows)
-    if result.empty:
-        return pd.DataFrame({"note": ["No key-person risks detected"]})
-    return result.sort_values("key_person_pct", ascending=False).reset_index(drop=True)
-
-
-def sheet_21_mixed_type_flags(df):
-    """D21: Subjects with p90/median >= 5 — mixed workflows under one label."""
-    client = df[~df["_is_internal"]].copy()
-    if "_hours" not in client.columns:
-        return pd.DataFrame({"note": ["Hours column not available"]})
-
-    subj_counts = client["_subject"].value_counts()
-    big = subj_counts[subj_counts >= 20].index.tolist()
-
-    rows = []
-    for subj in big:
-        hrs = client[client["_subject"] == subj]["_hours"].dropna()
-        if len(hrs) < 10:
-            continue
-        med = hrs.median()
-        p90 = hrs.quantile(0.9)
-        ratio = p90 / med if med > 0 else np.nan
-        if pd.isna(ratio) or ratio < 5:
-            continue
-        rows.append({
-            "subject": subj, "cases": int(subj_counts[subj]),
-            "median_hrs": round(med, 1), "p90_hrs": round(p90, 1),
-            "p90_median_ratio": round(ratio, 1),
-            "flag": "HIGH VARIANCE" if ratio >= 10 else "ELEVATED",
-        })
-
-    result = pd.DataFrame(rows)
-    if result.empty:
-        return pd.DataFrame({"note": ["No mixed-type subjects detected"]})
-    return result.sort_values("p90_median_ratio", ascending=False).reset_index(drop=True)
-
-
-# ═══════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════
 
@@ -1352,9 +1182,7 @@ def main():
 
     log("\n--- Preparing Cases ---")
     cases = prepare_cases(cases_raw)
-    log(f"  Named client: {(cases['_case_population'] == 'named_client').sum():,}  |  "
-        f"Blank client: {(cases['_case_population'] == 'blank_client').sum():,}  |  "
-        f"Admin: {(cases['_case_population'] == 'admin').sum():,}")
+    log(f"  Client cases: {(~cases['_is_internal']).sum():,}  |  Internal: {cases['_is_internal'].sum():,}")
 
     log("\n--- Preparing Emails ---")
     edf = prepare_emails(emails_raw, cases_raw) if not emails_raw.empty else pd.DataFrame()
@@ -1413,20 +1241,8 @@ def main():
     log("  D16 Triage Delay")
     sheets["D16_TriageDelay"] = sheet_16_triage_delay(cases)
 
-    log("  D17 Banker-Hours Budget")
-    sheets["D17_BankerHoursBudget"] = sheet_17_banker_hours(cases)
-
-    log("  D18 Claim Check")
-    sheets["D18_ClaimCheck"] = sheet_18_claim_check(cases)
-
-    log("  D19 Research Breakdown")
-    sheets["D19_ResearchBreakdown"] = sheet_19_research_breakdown(cases)
-
-    log("  D20 Key-Person Risk")
-    sheets["D20_KeyPersonRisk"] = sheet_20_key_person_risk(cases)
-
-    log("  D21 Mixed-Type Flags")
-    sheets["D21_MixedTypeFlags"] = sheet_21_mixed_type_flags(cases)
+    log("  D17 Use Case Evidence")
+    sheets["D17_UseCaseEvidence"] = sheet_17_usecase_evidence(cases)
 
     # ── Write Excel ──
     log(f"\nWriting: {OUTPUT_XLSX}")
@@ -1444,10 +1260,8 @@ def main():
         "## Files",
         f"- Cases: {len(cases_raw):,} rows",
         f"- Emails: {len(emails_raw):,} rows",
-        f"- Client inclusive (named+blank): {(~cases['_is_internal']).sum():,}",
-        f"- Named client: {(cases['_case_population'] == 'named_client').sum():,}",
-        f"- Blank company client: {(cases['_case_population'] == 'blank_client').sum():,}",
-        f"- Admin: {cases['_is_internal'].sum():,}",
+        f"- Client cases: {(~cases['_is_internal']).sum():,}",
+        f"- Internal cases: {cases['_is_internal'].sum():,}",
     ]
     if WARN:
         md.append("\n## Warnings")
