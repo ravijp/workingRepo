@@ -519,6 +519,38 @@ def main():
                    "These are blocking revenue. What's the bottleneck — "
                    "client hasn't sent docs, or WAB internal processing delay?")
 
+    # ── Signature Card ──
+    log("\n[Tier 2] Signature Card")
+    sc = subject_subset(client, "Signature Card")
+    sc_p90 = p90_threshold(sc)
+    log(f"  Total: {len(sc):,}  |  P90: {fmt_hrs(sc_p90)}")
+
+    slo = slow_sample(sc, sc_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_SignatureCard_Slow"] = out
+    record_summary("T2_SignatureCard_Slow", "Signature Card", "Slow (≥p90)",
+                   len(sc), len(slo), sc_p90, None,
+                   "Signature Card work should be document-driven. Slow outliers likely indicate "
+                   "missing signatures, stale paperwork, or back-and-forth clarification. "
+                   "Check Description and Activity Subject for the blocking pattern.")
+
+    fst = fast_sample(sc, 4.0)  # ≤4 hours
+    out = build_output_row(fst, col_map)
+    sheets["T2_SignatureCard_Fast"] = out
+    record_summary("T2_SignatureCard_Fast", "Signature Card", "Fast (≤4h)",
+                   len(sc), len(fst), None, 4.0,
+                   "Fast Signature Card cases show the clean baseline: complete documentation, "
+                   "clear request type, and no follow-up loop. Compare these against slow cases.")
+
+    unres = unresolved_sample(sc, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_SignatureCard_Unresolved"] = out
+    record_summary("T2_SignatureCard_Unresolved", "Signature Card", "Unresolved",
+                   len(sc), len(unres), None, None,
+                   "Open Signature Card cases are likely waiting on client action or stuck in review. "
+                   "Use age and last activity to separate expected pending work from neglected cases.")
+
     # ── Account Maintenance ──
     log("\n[Tier 2] Account Maintenance")
     am = subject_subset(client, "Account Maintenance")
@@ -571,6 +603,37 @@ def main():
                        "CD/beneficiary/signer changes have different resolution profiles "
                        "and should be separate use cases.")
 
+    # ── QC Finding ──
+    log("\n[Tier 2] QC Finding")
+    qc = subject_subset(client, "QC Finding")
+    qc_p90 = p90_threshold(qc)
+    log(f"  Total: {len(qc):,}  |  P90: {fmt_hrs(qc_p90)}")
+
+    slo = slow_sample(qc, qc_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_QCFinding_Slow"] = out
+    record_summary("T2_QCFinding_Slow", "QC Finding", "Slow (≥p90)",
+                   len(qc), len(slo), qc_p90, None,
+                   "Slow QC Finding cases likely need research, correction, or cross-team follow-up. "
+                   "Review the activity trail to see which finding types create the longest loops.")
+
+    fst = fast_sample(qc, 2.0)  # ≤2 hours
+    out = build_output_row(fst, col_map)
+    sheets["T2_QCFinding_Fast"] = out
+    record_summary("T2_QCFinding_Fast", "QC Finding", "Fast (≤2h)",
+                   len(qc), len(fst), None, 2.0,
+                   "Fast QC Finding cases should represent straightforward corrections or false alarms. "
+                   "These define the simplest remediation pattern.")
+
+    unres = unresolved_sample(qc, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_QCFinding_Unresolved"] = out
+    record_summary("T2_QCFinding_Unresolved", "QC Finding", "Unresolved",
+                   len(qc), len(unres), None, None,
+                   "Open QC Finding cases may indicate unresolved control issues or weak follow-through. "
+                   "Check whether they are actively progressing or simply aging in queue.")
+
     # ── General Questions ──
     log("\n[Tier 2] General Questions")
     gq = subject_subset(client, "General Questions")
@@ -607,6 +670,8 @@ def main():
 
     mislabel_kw = {
         "signature card": "→ Signature Card?",
+        "qc finding":    "→ QC Finding?",
+        "qc":            "→ QC Finding?",
         "close account":  "→ Close Account?",
         "new account":    "→ New Account Request?",
         "CD":             "→ CD Maintenance?",
