@@ -205,6 +205,11 @@ def build_output_row(df, col_map, extra_cols=None):
     Return a display DataFrame with the standard columns every sheet needs.
     extra_cols: list of (output_label, source_series) pairs to append.
     """
+    # Empty input → return empty so write_sheet() emits a 'no cases' note
+    # without us having to guard every column access below.
+    if df is None or df.empty:
+        return pd.DataFrame()
+
     out = pd.DataFrame()
 
     def _add(label, src_key, fallback_series=None):
@@ -278,7 +283,9 @@ def p90_threshold(subset):
 def slow_sample(subset, threshold, n=SAMPLE_SLOW):
     """Cases at or above the p90 threshold, sorted slowest first."""
     if threshold is None:
-        return pd.DataFrame()
+        # Preserve column structure so downstream build_output_row() can
+        # still introspect df.columns / df["_company_clean"] etc.
+        return subset.iloc[0:0].copy()
     return subset[subset["_hours"] >= threshold].sort_values("_hours", ascending=False).head(n)
 
 
