@@ -8,6 +8,21 @@ Each sheet = one anomaly type within a specific subject.
 Case Number column lets you paste directly into CRM search.
 
 Dependencies: pandas, openpyxl  (standard library otherwise)
+
+RUN
+---
+# Full deep dive — all 15 subjects (default output: wab_case_sampler.xlsx):
+python wab_case_sampler.py
+
+# Only the 5 newly added subjects
+# (New Account Child Case, CD Maintenance, Close Account,
+#  IntraFi Maintenance, Online Banking)
+# Output: wab_case_sampler_new_subjects.xlsx
+python wab_case_sampler.py --only-new
+
+# Custom subset — pass a comma-separated list of Subject names
+# Output: wab_case_sampler_subset.xlsx
+python wab_case_sampler.py --subjects "Online Banking,CD Maintenance"
 """
 
 # ┌─────────────────────────────────────────────────────────┐
@@ -29,6 +44,20 @@ OUTPUT_XLSX = os.path.join(OUTPUT_DIR, "wab_case_sampler.xlsx")
 LOG = []
 
 INTERNAL_COMPANIES = {"AAB ADMIN", "WAB ADMIN", "AAB ADMIN -", "WAB ADMIN -"}
+
+# Subjects added in the latest revision — selectable via --only-new
+NEW_SUBJECTS = [
+    "New Account Child Case",
+    "CD Maintenance",
+    "Close Account",
+    "IntraFi Maintenance",
+    "Online Banking",
+]
+
+# When None, run all subjects. When a set/list of subject names,
+# subject_subset() returns empty for any subject not in this list,
+# and main() will skip empty sheets / summary rows at write time.
+SELECTED_SUBJECTS = None
 
 # Max rows per sample sheet — enough to review in CRM without being overwhelming
 SAMPLE_SLOW      = 40
@@ -228,7 +257,16 @@ def write_sheet(writer, name, df, note=None):
 # ═══════════════════════════════════════════════════════════
 
 def subject_subset(client, subject_name):
-    """Case-insensitive subject filter."""
+    """
+    Case-insensitive subject filter.
+
+    Honors the module-level SELECTED_SUBJECTS allow-list. When a filter is
+    active and this subject is not in it, returns an empty DataFrame so the
+    downstream sample/summary calls naturally yield nothing — main() then
+    drops the empty sheets and summary rows before writing the workbook.
+    """
+    if SELECTED_SUBJECTS is not None and subject_name not in SELECTED_SUBJECTS:
+        return client.iloc[0:0].copy()
     return client[client["_subject"].str.lower() == subject_name.lower()].copy()
 
 
@@ -660,13 +698,190 @@ def main():
                    "If fast=short questions and slow=escalations, the subject is doing "
                    "double duty and should be split.")
 
+    # ── New Account Child Case ──
+    log("\n[Tier 2] New Account Child Case")
+    nacc = subject_subset(client, "New Account Child Case")
+    nacc_p90 = p90_threshold(nacc)
+    log(f"  Total: {len(nacc):,}  |  P90: {fmt_hrs(nacc_p90)}")
+
+    slo = slow_sample(nacc, nacc_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_NewAcctChild_Slow"] = out
+    record_summary("T2_NewAcctChild_Slow", "New Account Child Case", "Slow (≥p90)",
+                   len(nacc), len(slo), nacc_p90, None,
+                   "Child cases spawn from parent New Account Requests. Slow children likely mean "
+                   "the parent account is stuck waiting on a downstream setup step "
+                   "(online banking enrollment, debit card, ACH origination). "
+                   "Activity Subject should reveal which downstream step is the bottleneck.")
+
+    fst = fast_sample(nacc, 2.0)  # ≤2 hours
+    out = build_output_row(fst, col_map)
+    sheets["T2_NewAcctChild_Fast"] = out
+    record_summary("T2_NewAcctChild_Fast", "New Account Child Case", "Fast (≤2h)",
+                   len(nacc), len(fst), None, 2.0,
+                   "Fast child cases represent the clean downstream setup pattern — "
+                   "all parent docs done, child task executed without rework. "
+                   "Use these to baseline what a healthy account-onboarding tail looks like.")
+
+    unres = unresolved_sample(nacc, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_NewAcctChild_Unresolved"] = out
+    record_summary("T2_NewAcctChild_Unresolved", "New Account Child Case", "Unresolved",
+                   len(nacc), len(unres), None, None,
+                   "Open child cases are setup steps that never closed. "
+                   "If the parent account is live but the child is open, that is "
+                   "missed fulfillment — and likely the biggest silent NPS risk.")
+
+    # ── CD Maintenance ──
+    log("\n[Tier 2] CD Maintenance")
+    cd = subject_subset(client, "CD Maintenance")
+    cd_p90 = p90_threshold(cd)
+    log(f"  Total: {len(cd):,}  |  P90: {fmt_hrs(cd_p90)}")
+
+    slo = slow_sample(cd, cd_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_CDMaint_Slow"] = out
+    record_summary("T2_CDMaint_Slow", "CD Maintenance", "Slow (≥p90)",
+                   len(cd), len(slo), cd_p90, None,
+                   "CD Maintenance is deadline-driven (rollover dates, rate resets). "
+                   "Slow cases risk missing the maturity window — check whether these "
+                   "cluster around specific rollover events or rate-change instructions.")
+
+    fst = fast_sample(cd, 1.0)  # ≤1 hour
+    out = build_output_row(fst, col_map)
+    sheets["T2_CDMaint_Fast"] = out
+    record_summary("T2_CDMaint_Fast", "CD Maintenance", "Fast (≤1h)",
+                   len(cd), len(fst), None, 1.0,
+                   "Fast CD Maintenance likely reflects automated rollover confirmations "
+                   "and simple rate lookups. Confirms the split between mechanical and "
+                   "judgment-driven CD work.")
+
+    unres = unresolved_sample(cd, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_CDMaint_Unresolved"] = out
+    record_summary("T2_CDMaint_Unresolved", "CD Maintenance", "Unresolved",
+                   len(cd), len(unres), None, None,
+                   "Unresolved CD cases are deadline risks. Aging beyond the maturity "
+                   "window means client either auto-rolled unwillingly or lost interest — "
+                   "either way a service failure.")
+
+    # ── Close Account ──
+    log("\n[Tier 2] Close Account")
+    ca = subject_subset(client, "Close Account")
+    ca_p90 = p90_threshold(ca)
+    log(f"  Total: {len(ca):,}  |  P90: {fmt_hrs(ca_p90)}")
+
+    slo = slow_sample(ca, ca_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_CloseAccount_Slow"] = out
+    record_summary("T2_CloseAccount_Slow", "Close Account", "Slow (≥p90)",
+                   len(ca), len(slo), ca_p90, None,
+                   "Slow closures usually mean residual balances, pending items, or "
+                   "retention outreach. These are the attrition cases most worth reviewing "
+                   "— which drop-offs were preventable vs. clean exits?")
+
+    fst = fast_sample(ca, 1.0)  # ≤1 hour
+    out = build_output_row(fst, col_map)
+    sheets["T2_CloseAccount_Fast"] = out
+    record_summary("T2_CloseAccount_Fast", "Close Account", "Fast (≤1h)",
+                   len(ca), len(fst), None, 1.0,
+                   "Fast closures are typically zero-balance, no-activity shutdowns. "
+                   "The baseline for how a clean exit should look.")
+
+    unres = unresolved_sample(ca, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_CloseAccount_Unresolved"] = out
+    record_summary("T2_CloseAccount_Unresolved", "Close Account", "Unresolved",
+                   len(ca), len(unres), None, None,
+                   "Open Close Account cases are accounts in limbo — client wants out "
+                   "but something is blocking. Highest-risk queue for compliance and NPS.")
+
+    # ── IntraFi Maintenance ──
+    log("\n[Tier 2] IntraFi Maintenance")
+    intf = subject_subset(client, "IntraFi Maintenance")
+    intf_p90 = p90_threshold(intf)
+    log(f"  Total: {len(intf):,}  |  P90: {fmt_hrs(intf_p90)}")
+
+    slo = slow_sample(intf, intf_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_IntraFi_Slow"] = out
+    record_summary("T2_IntraFi_Slow", "IntraFi Maintenance", "Slow (≥p90)",
+                   len(intf), len(slo), intf_p90, None,
+                   "IntraFi (ICS/CDARS) work depends on external network confirmations. "
+                   "Slow cases likely reflect allocation rebalances or program-bank changes. "
+                   "Check Activity Subject for which IntraFi product and step is blocking.")
+
+    fst = fast_sample(intf, 2.0)  # ≤2 hours
+    out = build_output_row(fst, col_map)
+    sheets["T2_IntraFi_Fast"] = out
+    record_summary("T2_IntraFi_Fast", "IntraFi Maintenance", "Fast (≤2h)",
+                   len(intf), len(fst), None, 2.0,
+                   "Fast IntraFi cases are likely routine deposit placement confirmations. "
+                   "Confirms the mechanical baseline vs. multi-day allocation work.")
+
+    unres = unresolved_sample(intf, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_IntraFi_Unresolved"] = out
+    record_summary("T2_IntraFi_Unresolved", "IntraFi Maintenance", "Unresolved",
+                   len(intf), len(unres), None, None,
+                   "Open IntraFi cases may be waiting on external network responses. "
+                   "Separate truly pending (external) from stalled (internal) using age.")
+
+    # ── Online Banking ──
+    log("\n[Tier 2] Online Banking")
+    ob = subject_subset(client, "Online Banking")
+    ob_p90 = p90_threshold(ob)
+    log(f"  Total: {len(ob):,}  |  P90: {fmt_hrs(ob_p90)}")
+
+    slo = slow_sample(ob, ob_p90)
+    out = build_output_row(slo, col_map)
+    sheets["T2_OnlineBanking_Slow"] = out
+    record_summary("T2_OnlineBanking_Slow", "Online Banking", "Slow (≥p90)",
+                   len(ob), len(slo), ob_p90, None,
+                   "Slow Online Banking cases are usually entitlement changes, token resets, "
+                   "or multi-user setup. What should be a 5-minute flip becomes a day when "
+                   "signer authority or admin permissions are unclear.")
+
+    fst = fast_sample(ob, 0.5)  # ≤30 min
+    out = build_output_row(fst, col_map)
+    sheets["T2_OnlineBanking_Fast"] = out
+    record_summary("T2_OnlineBanking_Fast", "Online Banking", "Fast (≤30 min)",
+                   len(ob), len(fst), None, 0.5,
+                   "Fast Online Banking cases are password resets and simple unlocks — "
+                   "the canonical self-service candidates. Quantify this volume to "
+                   "justify a self-service deflection use case.")
+
+    unres = unresolved_sample(ob, n=SAMPLE_UNRESOLVED)
+    extra = [("Age (days)", unres["_age_days"])] if "_age_days" in unres.columns else []
+    out = build_output_row(unres, col_map, extra_cols=extra)
+    sheets["T2_OnlineBanking_Unresolved"] = out
+    record_summary("T2_OnlineBanking_Unresolved", "Online Banking", "Unresolved",
+                   len(ob), len(unres), None, None,
+                   "Open Online Banking cases typically wait on client action "
+                   "(enrollment acceptance, 2FA registration). Age tells you whether "
+                   "we abandoned the client or the client abandoned us.")
+
     # ───────────────────────────────────────────────────────
     #  CROSS-SUBJECT: potential mislabels
     #  Cases where Subject = General Questions or Research
     #  but Activity Subject strongly implies a different subject
     # ───────────────────────────────────────────────────────
-    log("\n[Cross-subject] Potential mislabels")
-    catchall = client[client["_subject"].isin(["General Questions", "Research"])].copy()
+    # Skip when a subject filter is active and neither source subject is selected.
+    run_xsubject = (
+        SELECTED_SUBJECTS is None
+        or "General Questions" in SELECTED_SUBJECTS
+        or "Research" in SELECTED_SUBJECTS
+    )
+    log("\n[Cross-subject] Potential mislabels"
+        + ("" if run_xsubject else " — skipped (filter active)"))
+    catchall = (
+        client[client["_subject"].isin(["General Questions", "Research"])].copy()
+        if run_xsubject else client.iloc[0:0].copy()
+    )
 
     mislabel_kw = {
         "signature card": "→ Signature Card?",
@@ -713,21 +928,37 @@ def main():
                        "labelling problem that inflates GQ and Research counts.")
 
     # ───────────────────────────────────────────────────────
+    #  FILTER OUT EMPTY SHEETS / SUMMARY ROWS WHEN A SUBJECT
+    #  FILTER IS ACTIVE — keeps the workbook tight.
+    # ───────────────────────────────────────────────────────
+    if SELECTED_SUBJECTS is not None:
+        kept = {k: v for k, v in sheets.items()
+                if v is not None and not (hasattr(v, "empty") and v.empty)}
+        dropped = set(sheets) - set(kept)
+        if dropped:
+            log(f"\nFilter active: dropping {len(dropped)} empty sheet(s)")
+        sheets = kept
+        SUMMARY_ROWS[:] = [r for r in SUMMARY_ROWS
+                           if r["Sheet"] in sheets and r["Cases Flagged"] > 0]
+
+    # ───────────────────────────────────────────────────────
     #  SUMMARY SHEET
     # ───────────────────────────────────────────────────────
     log("\nBuilding summary sheet")
     summary_df = pd.DataFrame(SUMMARY_ROWS)
     # add row counts from sheets dict
-    summary_df["Rows in Sheet"] = summary_df["Sheet"].map(
-        lambda s: len(sheets[s]) if s in sheets and sheets[s] is not None else 0
-    )
+    if not summary_df.empty:
+        summary_df["Rows in Sheet"] = summary_df["Sheet"].map(
+            lambda s: len(sheets[s]) if s in sheets and sheets[s] is not None else 0
+        )
     sheets["Summary"] = summary_df
 
     # ───────────────────────────────────────────────────────
-    #  WRITE EXCEL
+    #  WRITE EXCEL — output filename reflects the active filter
     # ───────────────────────────────────────────────────────
-    log(f"\nWriting: {OUTPUT_XLSX}")
-    with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
+    output_xlsx = _output_path()
+    log(f"\nWriting: {output_xlsx}")
+    with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
         # Summary first
         write_sheet(writer, "Summary", sheets.pop("Summary"))
         for name, df in sheets.items():
@@ -739,5 +970,52 @@ def main():
         log(f"  {name}: {len(df) if df is not None else 0} rows")
 
 
+def _output_path():
+    """
+    Workbook filename varies by filter so a filtered run does not
+    overwrite the full deep-dive workbook.
+    """
+    if SELECTED_SUBJECTS is None:
+        return OUTPUT_XLSX
+    if set(SELECTED_SUBJECTS) == set(NEW_SUBJECTS):
+        suffix = "_new_subjects"
+    else:
+        suffix = "_subset"
+    return os.path.join(OUTPUT_DIR, f"wab_case_sampler{suffix}.xlsx")
+
+
+def _parse_args():
+    import argparse
+    p = argparse.ArgumentParser(
+        description="WAB Case Sampler — Tier 1 & Tier 2 Subject Deep Dive",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python wab_case_sampler.py\n"
+            "  python wab_case_sampler.py --only-new\n"
+            "  python wab_case_sampler.py --subjects \"Online Banking,CD Maintenance\"\n"
+        ),
+    )
+    p.add_argument(
+        "--only-new", action="store_true",
+        help=("Generate sheets only for the 5 newly added subjects: "
+              + ", ".join(NEW_SUBJECTS)),
+    )
+    p.add_argument(
+        "--subjects", default=None,
+        help=("Comma-separated list of Subject names to include "
+              "(case-sensitive, must match the Subject column exactly). "
+              "Overrides --only-new when both are passed."),
+    )
+    return p.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
+    if args.subjects:
+        SELECTED_SUBJECTS = {s.strip() for s in args.subjects.split(",") if s.strip()}
+        print(f"[filter] Selected subjects: {sorted(SELECTED_SUBJECTS)}")
+    elif args.only_new:
+        SELECTED_SUBJECTS = set(NEW_SUBJECTS)
+        print(f"[filter] --only-new → {sorted(SELECTED_SUBJECTS)}")
     main()
