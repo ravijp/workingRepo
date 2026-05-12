@@ -1,104 +1,121 @@
-# Rovo Queries — Iteration 2
+# Rovo Queries — Iterations 3, 4, and 5 (consolidated)
 
-**How to use this file.** Open Rovo chat on VDI. Run each query group as a single Rovo prompt. After each response, screenshot the full Rovo answer (including the source citations panel) and save the screenshot into this folder with a filename matching the query group ID (e.g., `rovo_iter2_G1_screenshot.png`). Then paste the key findings into `rovo_findings_iteration_2.md` or note which screenshots to read.
+**How to use this file.** Single VDI Rovo pass. Five query groups, each pasted into Rovo as one prompt. Screenshot the full Rovo answer (including source citations panel) and save to this folder as `rovo_iter345_G<N>_screenshot.png`. Distil findings into `rovo_findings_iterations_3_4_5.md` with sources next to each fact.
 
-Queries are grouped so each Rovo session produces multiple useful answers. **Six groups total.** Aligned to the validation needs surfaced by `iteration_2_documents.md` §8 (Open questions Q-2.1 through Q-2.6).
+**Why one file across three iterations.** The validation needs across iterations 3, 4, and 5 are tightly coupled — the bb_opportunityservice schema (G-4.1) determines write-back syntax for both iterations 4 and 5; the MuleSoft DAO contract (G-5.1) is the back-half of the architecture; the smaller targeted lookups (G-3.3 FCM picklist, G-3.4 IBS Connector, G-3.5 ACH Tracker) feed the joins iteration 4 surfaces in its Outstanding Items panel and iteration 5 may need to reference. Running one consolidated Rovo pass costs one VDI session and produces all the Confluence-side evidence the three iterations need.
 
----
+**Five groups total.** Aligned to the claim markers across `iteration_3_external_joins.md`, `iteration_4_arw_prefill.md`, and `iteration_5_submit_mulesoft.md`.
 
-## G1 — KYC handling: external vs internal artifact, and HOA AI New Account Review's documented stance
-
-**Why we need this.** Q-2.1. `iteration_2_documents.md` §2.6 routes KYC as an internal banker-completed form (inverted flow — the agent generates rather than extracts) based on the Oak Hill case's Entity KYC Profile Form HOA. The procedure §3.1.1 states *"KYC: Required only for a New Non-HOA entity"*, which contradicts the Oak Hill case having one. The most likely reconciliation is two artifacts sharing a name — external client-completed KYC (Non-HOA only) and internal banker-completed KYC (both HOA and Non-HOA). Confirmation lets the agent's KYC routing close cleanly.
-
-**Query to paste into Rovo:**
-
-> For the HOA AI New Account Review project and the AAB New Account procedure, please share what is documented about KYC handling. Specifically:
-> (a) Does the project distinguish between an *external* (client-completed) KYC form and an *internal* (banker-completed) KYC form? If so, what are the field sets for each, and which entity types (HOA vs Non-HOA) require which form?
-> (b) For HOA entities specifically, is there an internal Entity KYC Profile Form HOA that the bank completes, or does the procedure's §3.1.1 "Required only for a New Non-HOA entity" rule mean HOAs do not have any KYC artifact at all?
-> (c) For the to-be UiPath bot, what KYC handling is in scope and what is out of scope? Is KYC adjudication done by the bot, by the banker, or by a separate compliance / KYB process?
-> (d) Are LexisNexis IDV, OFAC, and PEP screening results stored on the KYC form itself, on the Case, or in a separate compliance system?
-> Please cite the Confluence pages directly and include the field-level documentation if available.
+| Group | Targets | Iterations claim-mapped |
+|---|---|---|
+| G-3.3 | FCM document_type picklist for PMC Control Prong | Iteration 3 §5 (claim_3_1) |
+| G-3.4 | IBS Connector contract from ops5/NSF for Controlling Individual lookup | Iteration 3 §6 (claim_3_2) |
+| G-3.5 | ACH Tracker programmatic surface or confirmation of UI-only | Iteration 3 §7 (claim_3_3) |
+| G-4.1 | bb_opportunityservice Dataverse entity schema (central unknown) | Iteration 4 §1, §6 (claim_4_1) |
+| G-5.1 | wab-ent-digitalacntopen-eapi contract + AABOS Second-Review tooling | Iteration 5 §3, §6 (claim_5_1, claim_5_2, claim_5_3) |
 
 ---
 
-## G2 — Per-state SOS sample coverage and the HOA AI New Account Review IXP training corpus
+## G-3.3 — FCM document_type picklist for PMC Control Prong records
 
-**Why we need this.** Q-2.2. `iteration_2_documents.md` §2.1 plans a 5-state training-and-evaluation corpus (FL, OR, TX seen in discovery plus likely CA, NY, or AZ) for the SOS extractor. Rovo Q2.4 established that UiPath IXP requires 100+ samples per doc type — but per *jurisdiction* coverage is unknown. The HOA AI New Account Review project's SDD likely documents which states the IXP extractor was trained against; cross-referencing tells us whether Zenon's pilot corpus overlaps, complements, or fills a gap.
+**Why we need this.** Iteration 3 §5 (FCM Control Prong lookup) calls `POST /fcm/documents/query` with PMC bank account numbers and filters by document_type to retrieve the PMC's Control Prong individual reference. Rovo iteration-2 G6 confirmed the FCM System API exists (`wab-content-management-fis-sapi`), exposes the query endpoint, and accepts SSN/account number/CIF as query keys. What it did not return was the controlled picklist of `document_type` values applicable to PMC Control Prong / Authorization records — the codes the agent passes to filter the query. The Middesk-side codes are documented (`CU0304` for ID Verification/OFAC; `CU0101` for Formation Documents per Rovo Q3.7), but the PMC-Control-Prong-specific codes are the gap.
 
 **Query to paste into Rovo:**
 
-> For the HOA AI New Account Review project's IXP extractor for Secretary of State documents, please share what is documented about training corpus composition. Specifically:
-> (a) Which states' SOS filings are included in the IXP training corpus today? Is the coverage equal per state, weighted by HOA volume, or limited to a few high-volume jurisdictions?
-> (b) What is the documented minimum sample count per state for the SOS extractor to ship, given the broader 100+ samples per doc type rule for UiPath IXP?
-> (c) Has the project documented per-state accuracy after training — are there states the extractor performs poorly on?
-> (d) What is the process for adding a new state to the corpus once the extractor is in production — is it a model retrain, a corpus extension, or a separate document model?
-> Please cite the Confluence pages directly (HOA AI New Account Review PDD / SDD).
+> For WAB's FIS Content Manager (FCM) and the MuleSoft `wab-content-management-fis-sapi` System API, please share the complete document_type picklist and the codes specifically associated with PMC Control Prong individual records. Specifically:
+> (a) What is the complete controlled list of `document_type` values that `POST /fcm/documents/query` and `POST /fcm/document` accept? Is the picklist available via `GET /fcm/documentTypes`, and if so, share the response shape.
+> (b) Which document_type values are used for PMC Control Prong individual / Authorization records — the documents §3.1.1 of the New Account procedure references when it says "Confirm Control Prong individual in D365 or Image Centre > Document Research > under the PMC TIN"?
+> (c) When a PMC's Control Prong individual changes (e.g., the PMC names a new authorized individual), is a new Control Prong document filed under the PMC's existing account number, or under a new account number, or under a separate Control Prong-specific record key?
+> (d) Are these FCM document_type codes the same as the D365 CRM "File Document Type" dropdown values bankers select when uploading attachments, or are they two separate controlled lists (as D-007 in `decisions_log.md` established for the broader case)?
+> (e) Beyond Middesk's CU0304 / CU0101 codes already documented, what is the complete CU-prefixed code list, with semantics?
+> Please cite the Confluence pages directly (FCM System API documentation, FIS - Content Manager / ImageCentre Runbook, FCM Business Customer/Account Document Service).
 
 ---
 
-## G3 — Documented extraction field lists for Management Agreement, SOS, and Recert email
+## G-3.4 — IBS Connector contract from ops5/NSF for Type A Controlling Individual lookup
 
-**Why we need this.** Q-2.3. `iteration_2_documents.md` §2.1, §2.2, §2.4 specify per-doc-type schemas drawn from `onboarding_doc_review_deep_dive.md` (which derived from the three discovery cases plus the procedure). The HOA AI New Account Review project's SDD documents its own extraction field list for the three in-scope doc types (Management Agreement, SOS via Middesk API, Recert email per Rovo Q2.3); cross-referencing catches any field the agent is missing and any field whose canonical name should be aligned with WAB's vocabulary.
+**Why we need this.** Iteration 3 §6 (IBS Insight read for Type A entities) inherits the IBS Connector from ops5/NSF per the banker_assistant_overview's shared-substrate framing. The agent calls `ibs_connector.get_customer_relationship(cis_number, fields=[ControllingIndividual, CustomerStatus, RelationshipHistory, AuthorizedSigners])`. The exact contract shape — field names, types, authentication, error handling, latency profile — comes from the ops5/NSF integration design; Iteration 3 documents it as `claim_3_2`. If WAB Confluence carries the ops5/NSF integration design, that's the cleanest resolution; if not, this becomes a cross-Zenon-workstream lookup against ops5's iteration artifacts.
 
 **Query to paste into Rovo:**
 
-> For the HOA AI New Account Review project, please share the documented extraction field list for each in-scope document type. Specifically:
-> (a) For Management Agreement, what fields does the IXP extractor produce (effective date, association legal name, manager name, signatures, term, recitals — what is the complete list, with field names, types, and required-vs-optional flags)?
-> (b) For SOS (whether retrieved via Middesk API or extracted from an attachment), what fields does the project consume — entity legal name, filing number, formation date, FEIN, principal address, registered agent, entity type, status, history?
-> (c) For Recert email (the certification response from the client), what fields does the bot extract, and how does it classify the three certification statements (complete-and-correct, seven-day-notice, no-25-percent-owner)? Is the response classification per-statement or a single whole-email verdict?
-> (d) Is there a documented mapping from these extraction outputs to the ARW Dataverse field schema?
-> Please cite the Confluence pages directly (PDD / SDD) and include any data dictionary or field-mapping table.
+> For the ops5 NSF Decisioning project (or AAB NSF / AAB Non-Posted Decisioning, as it may be named in Confluence) and the IBS Insight integration that project consumes, please share what is documented about the IBS Connector contract. Specifically:
+> (a) What is the integration pattern between Zenon's / WAB's NSF Decisioning agent and IBS Insight — is it a MuleSoft EAPI, a direct API call, an SDK, or an SQL-style read against IBS's database surface? What is the endpoint name?
+> (b) What fields does the connector expose per customer record — specifically: CIS Number, Controlling Individual, Customer Status, Relationship History, Authorized Signers, and any related fields the HOA New Account Onboarding agent could consume?
+> (c) What is the authentication pattern (service account credentials, OAuth client credentials, MuleSoft client_id + client_secret), and what is the latency profile per call?
+> (d) Are there documented sample request/response payloads? Is there a sandbox / QA tier?
+> (e) Which other projects at WAB consume IBS Insight programmatically today — and is the IBS Connector built as a shared enterprise service or as a project-specific integration?
+> Please cite the Confluence pages directly (NSF Decisioning PDD/SDD, IBS Insight Runbook, MuleSoft API Inventory for IBS-related endpoints, AAB Decisioning project docs).
 
 ---
 
-## G4 — LexisNexis IDV integration: pattern, contract, ownership
+## G-3.5 — ACH Tracker programmatic surface
 
-**Why we need this.** Q-2.4. `iteration_2_documents.md` §2.6 routes the KYC A5 field through a LexisNexis IDV API call that lives in Iteration 3 — but Iteration 2's KYC-generation routing surfaces the dependency. Need the integration shape (REST EAPI, MuleSoft-fronted, contract-shape sample) so Iteration 3 can plan against it rather than against a placeholder.
+**Why we need this.** Procedure §3.3.5 documents the best-practice CoID uniqueness check via ACH Tracker before submitting accounts with ACH origination. The agent's Iteration 3 join (f) needs to know whether ACH Tracker has a programmatic API, a Dataverse-resident data model, or is strictly a UI-only tool. The pilot default per D-023 is to surface the check as a banker-acknowledgment Outstanding Item; a programmatic surface would let the agent automate it and would be a meaningful capability upgrade.
 
 **Query to paste into Rovo:**
 
-> For WAB's LexisNexis Identity Verification integration, please share what is documented about the integration pattern and contract. Specifically:
-> (a) Is the LexisNexis IDV call wrapped behind a MuleSoft EAPI, a direct REST integration, or another pattern? What is the endpoint name (e.g., `wab-az-...-eapi`)?
-> (b) What is the request payload — what fields does the bank send (entity name, principal address, individual name + DOB + SSN if applicable)?
-> (c) What is the response payload — what fields come back, what does a "verified" response look like vs a "discrepancy" or "no match", and how are confidences expressed?
-> (d) Which projects currently use LexisNexis IDV at WAB? Is the integration shared as an enterprise service or is each project's integration its own?
-> (e) Are there documented latency SLAs and throughput limits?
-> Please cite the Confluence pages directly (LexisNexis Runbook, EAPI documentation, Alloy Runbook if applicable).
+> For WAB's "ACH Tracker" — the tool the New Account Desktop Procedure §3.3.5 references when it advises bankers to "search in ACH Tracker to confirm the CoID number is not being used" before submitting accounts with ACH origination — please share what is documented about the tool. Specifically:
+> (a) What is ACH Tracker? Is it a SharePoint list, a custom Power App, a separate web application, an Excel workbook on a shared drive, a D365 entity, a custom database — or some combination?
+> (b) Does it expose a programmatic API, a Dataverse-resident schema, an ODBC-readable database, or any other surface a service-account-authenticated client could query?
+> (c) What is the data model — what fields does each ACH Tracker entry carry (CoID, associated PMC, associated entity, status, dates, banker who registered it)?
+> (d) Who owns ACH Tracker (business owner, technology owner, SME)? Where does the source-of-truth ACH origination registry live — in ACH Tracker, in IBS, in FIS, in Fiserv, elsewhere?
+> (e) Is there a documented "ACH Tracker guide" the procedure §3.3.5 references? If so, what does it instruct bankers to check, and is there any documented automation around the check?
+> (f) For the HOA AI New Account Review UiPath bot, is ACH Tracker in scope as an application the bot interacts with, or is it deliberately out of scope?
+> Please cite the Confluence pages directly (ACH Tracker guide, ACH Origination Runbook, AAB Operations procedures, HOA AI New Account Review PDD).
 
 ---
 
-## G5 — OFAC and PEP screening API surface at WAB
+## G-4.1 — Complete bb_opportunityservice Dataverse entity schema and ARW relationship structure
 
-**Why we need this.** Q-2.5. Same shape as G4 — Iteration 2's KYC-generation routes D1 (OFAC) and D2 (PEP) through external API calls that Iteration 3 will run. Rovo Q1.5 + D-006 already established that Middesk's Watchlist/OFAC service was turned OFF at WAB on 2025-04-01 and that OFAC happens elsewhere; we need the elsewhere.
+**Why we need this.** This is the single most consequential lookup for Iteration 4 (and downstream for Iteration 5's MuleSoft DAO call payload). Rovo Q3.10 named the entities involved (`AAB New Accounts Request`, `HOA case`, `PMC`, `Child Company`, `Control Prong`, `Accounts Requested`) but did not return field-level schema. Rovo Q3.12 surfaced `bb_opportunityservice` by name. Iteration 4's pre-fill writes ~30+ fields across the parent ARW entity, the Accounts Requested rows, and the Child Company entity; without the schema, the field-mapping table is logical, not literal.
 
 **Query to paste into Rovo:**
 
-> For WAB's OFAC and PEP screening for business and individual customers, please share what is documented about the API surface used today. Specifically:
-> (a) Which system performs OFAC screening at WAB today (now that Middesk's Watchlist service was turned off 2025-04-01)? Is it MuleSoft-fronted, MS Dynamics-native, or a separate compliance system?
-> (b) What is the API contract shape — request and response — for an OFAC screen on a business name? On an individual?
-> (c) Same question for PEP (Politically Exposed Person) screening — which system, what contract?
-> (d) Are screening results persisted on the Case in D365, in a separate compliance application tier, or both?
-> (e) Which projects currently consume the OFAC / PEP APIs? Is the integration shared or per-project?
-> Please cite the Confluence pages directly (compliance Runbooks, EAPI documentation).
+> For the AAB Operations Automation D365 solution (owned by Janus Lund, Customer Service module, Silver tier) and specifically the `bb_opportunityservice` Dataverse entity that represents the AAB New Accounts Request Client Action, please share the complete entity field schema. Specifically:
+> (a) What is the complete column list for `bb_opportunityservice` — logical names (e.g., `bb_request_notes`, `bb_mgmt_company`), display names, types (string, lookup, picklist, decimal, datetime, etc.), required-vs-optional flags, picklist values where applicable (e.g., the full `Type of Entity` dropdown referenced in §3.3.4 — Nonprofit-Corp, Nonprofit-Assoc/Org, etc.)?
+> (b) What is the relationship structure: which related entities does `bb_opportunityservice` reference (PMC / `account`, Child Company / `account`, Control Prong / `contact`, Accounts Requested / what entity?), via what relationship attributes (`@odata.bind` lookup column names)?
+> (c) What is the Accounts Requested child entity — is it `bb_aab_account_request`, `bb_accounts_requested`, or another logical name? Same schema breakdown: column list, types, picklists for Account Type, Approved Rate, Interest Plan, Lockbox, ACH.
+> (d) What are the workflow / status_reason values on `bb_opportunityservice` for the documented workflow bar states (New / Submitted / Processed / CD Funding / Ready for Delivery / Completed/Cancelled per §3.3)?
+> (e) Are there documented Dataverse plug-ins, custom workflows, or business rules attached to `bb_opportunityservice` that affect the write semantics (e.g., when the agent PATCHes a field, does a plug-in fire that recomputes a dependent field)?
+> (f) What are the Case (`incident`) status_reason picklist values used by the AAB-specific lifecycle — specifically the values for "Waiting on Customer", "AABOS Review", "Partial Account Creation" if defined, "Ready for Delivery", "Resolved"? (This also resolves D-011 in `decisions_log.md`.)
+> (g) For the File Document Type attachment picklist (D-012 in `decisions_log.md`), what is the complete controlled list of values, and on which entity does it live (Annotation, activitymimeattachment, custom)?
+> Please cite the Confluence pages directly (AAB CRM solution documentation, D365 entity reference pages, Janus Lund's team's solution-config pages, AAB Operations Automation Project Intake) and where relevant include screenshots of the D365 solution explorer / customization views.
 
 ---
 
-## G6 — Image Center programmatic access under PMC TIN
+## G-5.1 — wab-ent-digitalacntopen-eapi MuleSoft contract + AABOS Second-Review tooling
 
-**Why we need this.** Q-2.6. The procedure §3.1.1 instructs bankers to *"Confirm Control Prong individual in D365 or Image Centre > Document Research > under the PMC TIN"*. Iteration 3 plans to perform this lookup programmatically. Need to confirm whether Image Center exposes a programmatic API or is strictly UI-only — and if UI-only, the implication is the agent must surface this as a banker action rather than executing it.
+**Why we need this.** Two related needs in one group because both center on the post-Submit handoff: the MuleSoft DAO call shape and the AABOS-side review surface that engages with the agent's outputs.
+
+**For the MuleSoft DAO call (claim_5_2, claim_5_3 in Iteration 5).** The endpoint name `wab-ent-digitalacntopen-eapi` is established per `_STATUS.md` and Rovo Q3.9's documented target-state flow (Customer Search → Customer Creation → Account Number Generator → Orchestration EAPI → FCM API). The contract — request body schema, 200/206/400 response shapes, authentication, retry semantics, idempotency at row level — is the gap. The 206 partial-content handling is the non-trivial case Iteration 5 §3.2 designs around.
+
+**For AABOS Second-Review (claim_5_1).** AABOS's existing review tooling shapes how the agent presents its outputs (Outstanding Items panel, TraceLog, external reference IDs). Pilot default is "D365 timeline + Smart Assist summary"; if AABOS uses a different surface (BAM+, Power BI, SharePoint queue, custom canvas app), the integration shape changes.
 
 **Query to paste into Rovo:**
 
-> For WAB's Image Center (the document research / archival system used in the New Account procedure §3.1.1), please share what is documented about programmatic access. Specifically:
-> (a) Does Image Center expose a REST API, a SOAP service, a queue-based interface, or any other programmatic surface, or is it strictly a UI tool accessed by bankers through the standard application?
-> (b) If programmatic access exists, what is the authentication pattern, the supported queries (search by TIN, search by document type, etc.), and the response shape?
-> (c) For the HOA AI New Account Review project specifically, does the to-be UiPath bot read from Image Center, or is Image Center access deliberately left as a banker manual step?
-> (d) Is there a known roadmap item to expose Image Center programmatically — for example, as part of a broader content-services modernization?
-> Please cite the Confluence pages directly (Image Center Runbook, HOA AI New Account Review PDD).
+> For WAB's MuleSoft `wab-ent-digitalacntopen-eapi` endpoint and the AABOS Second-Review process at AAB Operations, please share what is documented. Specifically:
+>
+> **Part A — wab-ent-digitalacntopen-eapi contract:**
+> (a) What is the endpoint URL and method? Is the RAML/OAS contract published in MuleSoft Anypoint Exchange or in Azure DevOps? Which user stories / change records cover its delivery (per `_STATUS.md` there is a US 527655 reference — confirm scope)?
+> (b) What is the request body schema — top-level fields (customer / accountsRequested / controlProng / configuration / compliance reference IDs) and field types?
+> (c) What are the documented response shapes for 200 (full success — account numbers, CIS number, FCM filings), 206 (partial — some accounts opened, some failed; what errorCodes are documented), 400 (validation failure), and 5xx (system error)?
+> (d) Is the EAPI idempotent at the row level — when the agent re-submits a payload that contains a `rowId` for which an account has already been created, what happens?
+> (e) What is the authentication pattern (OAuth client credentials via MuleSoft? Bearer token? client_id + client_secret)? What is the documented latency SLA and retry posture?
+> (f) Which projects consume this EAPI today — AABOS only, or also DAO, BDAO, CDAO? Is the EAPI live in production, in QA, or planned?
+>
+> **Part B — AABOS Second-Review tooling and process:**
+> (a) When a Case lands in AABOS's queue after the banker Submits, what tool(s) does AABOS use to perform the Second Review documented in Slide 19 #7 — D365 directly, BAM+, a SharePoint queue, a custom canvas app, a Power BI dashboard, something else?
+> (b) Where does the AABOS review tracking live — is "Needs Correction" a status on the Case, an Annotation, an entity field, a separate workflow?
+> (c) What does AABOS check during the Second Review — is there a documented Second-Review checklist?
+> (d) After Second Review, the procedure §3.3.11 says "the AABOS team will send it back with 'Needs Correction' and the banker will need to fix the client action and re-submit it" — what is the technical implementation of the "send back" gesture? Status change? Notification? Email?
+> (e) What is the Auto-Process click's technical implementation today — does it trigger the SSOT manual pipeline, or the new MuleSoft EAPI? Is there a feature-flag controlling which path runs?
+>
+> Please cite the Confluence pages directly (MuleSoft APIs for AAB Account Opening Business Case, AAB Account Opening MuleSoft Integration design, AABOS Operations procedures, Auto-Process documentation if any, BAM+ documentation if relevant) and include any screenshots of API definitions, AABOS review tools, or process flow diagrams.
 
 ---
 
 ## Status
 
 - **Loop step:** 2 (Surface validation needs) — this file written.
-- **Next action:** Ravi runs G1–G6 on VDI Rovo. Screenshots saved as `rovo_iter2_G<N>_screenshot.png` in this folder. Findings distilled into `rovo_findings_iteration_2.md` with sources per fact.
+- **Next action:** Ravi runs G-3.3 through G-5.1 on VDI Rovo. Screenshots saved as `rovo_iter345_G<X>_screenshot.png` in this folder. Findings distilled into `rovo_findings_iterations_3_4_5.md` with sources per fact. Then reconcile (loop step 4) — fold findings back into iterations 3, 4, 5; promote proposed decisions D-022 through D-027 to decided status where evidence supports; demote unresolved claims to explicit open questions in `decisions_log.md`.
+- **Note on web queries:** the consolidated web queries file (`web_queries_iterations_3_4_5.md`) carries one fallback web query for the wab-ent-digitalacntopen-eapi contract if a publicly-accessible RAML exists. Most other claims resolve through Rovo or fall through to Chris-direct asks.
