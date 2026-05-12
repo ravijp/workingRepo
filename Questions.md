@@ -1,77 +1,106 @@
-Batch 1 — Settle the existing builds and their status
-Before designing anything, we need to know what's already built, what's planned, and what's paused. These five questions reveal whether Zenon is building net-new, replacing a UiPath implementation, or layering on top.
+# Rovo Queries — Iteration 1
 
-"What is the current production / pilot / paused status of the HOA AI New Account Review project? Has BOT1 / BOT2 been deployed to production? What is the current monthly volume processed?"
+**How to use this file.** Open Rovo chat on VDI. Run each query group as a single Rovo prompt. After each response, screenshot the full Rovo answer (including the source citations panel) and save the screenshot into the same folder with a filename matching the query group ID (e.g., `rovo_iter1_G1_screenshot.png`). Then come back here and either paste the key findings into `rovo_findings_iteration_1.md` or just let me know which screenshots to read.
 
-"What were the Known Exceptions and pain points reported during UAT and post-deployment for the HOA AI New Account Review? Are there any logged exception reports or summary metrics from production runs?"
+Queries are grouped so each Rovo session produces multiple useful answers. **Six groups total.**
 
-"For the Settlement Services Onboarding MVP and Phase 2 PDDs — what is the current status, what doc types are live, and what extraction accuracy has been observed in production? Are there any post-mortem or lessons-learned documents?"
+---
 
-"What is the relationship between the HOA AI New Account Review project and the broader HOA Operations AI strategy deck owned by Chris Crawford? Is the existing UiPath bot considered the long-term solution, or is it expected to be replaced?"
+## G1 — UC1 hand-off contract to downstream agents
 
-"Show me the Middesk Documentation Automation page in full — specifically the green-light / yellow-light / red-light decision rules, the field-level comparison logic between MidDesk and the Management Agreement, and any documented false-positive or false-negative rates."
+**Why we need this.** Iteration 1 starts at UC1's output boundary. We need to know whether UC1's hand-off to a downstream agent (like the HOA New Account agent) is purely an in-Dataverse state change, or whether UC1 emits any structured payload, log entry, or event. Affects claims C1.1, C1.4, C1.20.
 
-Batch 2 — IDP and document-extraction surface
-The slide says "Review documents for completeness and accuracy using IDP." We need to know exactly what IDP is, who owns it, and what its current document coverage is.
+**Query to paste into Rovo:**
 
-"What IDP platform does WAB use today — UiPath Document Understanding, Azure AI Document Intelligence, ABBYY, AWS Textract, or something else? Who is the platform owner? What is the licensing / capacity model?"
+> For the AAB Case Intake & Routing project (UC1), please share what is documented about how UC1 hands off a case to a downstream agent or workflow after it has classified the email and created the case. Specifically:
+> (a) Does UC1 emit a structured payload, event, or log entry when classification completes, or does it simply set the Subject field on the Case and rely on downstream consumers to observe the state change?
+> (b) Are confidence levels (High / Medium / Low) or rationale text captured anywhere on the Case record — as custom fields, as a Note (Annotation), or in the Case timeline?
+> (c) Is there a documented "ready for downstream agent" Case state, or is the Case simply created with Subject set and Status = In Progress?
+> (d) For cases where UC1's prediction is low-confidence, what is the documented downstream behavior?
+> Please cite the Confluence pages directly and include screenshots of any sequence or architecture diagrams.
 
-"List every IDP extractor or document model currently in production at WAB, with: doc type, owning project, accuracy in production, monthly volume processed."
+---
 
-"For each of these HOA New Account document types, does an IDP extractor exist today, is one in development, or is one not yet scoped: Management Agreement, Secretary of State filing, Articles of Incorporation, Bylaws, CP575 IRS letter, BOC, HOA Signature Card, KYC, Cert email response, Driver License / Passport / ID documents?"
+## G2 — D365 Case email-attachment storage at WAB
 
-"What is the IDP training-sample requirement per document type at WAB? Who is responsible for labeling training data? What is the typical timeline from start labeling to model in production?"
+**Why we need this.** The agent reads attachments via Annotations. We claimed (C1.3, C1.10) that D365 stores attachments as Annotations with documentbody base64 and that the controlled File Document Type dropdown values include SOS, Management Ag..., Recert, KYC, Misc, Email Request fr.... Need to confirm against WAB's actual D365 configuration.
 
-"How does IDP today hand off extracted fields to D365 CRM — direct API write, MuleSoft staging, RPA, manual review queue? Show me the integration pattern document or architecture diagram."
+**Query to paste into Rovo:**
 
-Batch 3 — MuleSoft, IBS, and ARW auto-processing
-The slide calls out "MuleSoft-enabled auto-processing" and "MuleSoft / IBS — account creation." We need to know what API surface MuleSoft exposes today and what the contract for "Submit ARW → accounts created" looks like.
+> For the AAB D365 CRM, please share documentation on how email attachments are stored on Case records, specifically:
+> (a) Are attachments stored as Annotation records on the Case directly, on the Email Activity, or both? Is there a configuration setting that controls this?
+> (b) The HOA New Account Review process documents a "File Document Type" dropdown that bankers select when uploading attachments. What is the complete controlled list of values for this dropdown — please provide all entries, not a partial list.
+> (c) Is "CP575" or "IRS Notice" present in that controlled list today? If not, is there a documented process for proposing new File Document Type values?
+> (d) Is there an automated process that classifies attachments at upload, or is the File Document Type entirely banker-selected today?
+> Please cite the Confluence pages directly.
 
-"Show me the MuleSoft API specification for the AAB New Accounts Request (ARW) Auto-Process flow. What fields does it require as input? What does it return? What are the failure modes and how are they surfaced back to the case?"
+---
 
-"What is the Dynamic Deposit API mentioned in the Account Automation Overview? Is it the same as MuleSoft, a layer on top, or a separate service? Who owns it? What is its production status?"
+## G3 — Power Automate / Dataverse webhook surface for external agents
 
-"What is the contract between AABOS Doc Review and MuleSoft auto-processing? Specifically: after AABOS clicks Auto-Process, what fields on the ARW must be populated, what attachments must be present, what document tags must be set, and what validation does MuleSoft run before invoking the Dynamic Deposit API?"
+**Why we need this.** Claim C1.2 — the agent needs some mechanism to react to Case state changes. Need to know what WAB has actually deployed and approved for external integrations into D365 Case events.
 
-"For the AAB New Accounts Request entity in D365 — what is the full field schema, what fields are required vs. optional, what fields are populated by auto-pop logic, and what fields are calculated downstream by MuleSoft? Ideally I want the Dataverse entity metadata or solution export."
+**Query to paste into Rovo:**
 
-"What is the integration pattern between D365 CRM, MuleSoft, and IBS for account creation today? Walk me through the sequence: ARW Submit → AABOS Review → Auto-Process → CIS record creation → account number assignment → write-back to D365."
+> For WAB's Dynamics 365 CRM, please share documented patterns for an external service or agent to react to Case record events (creation, Subject field set, Status change). Specifically:
+> (a) Has WAB deployed Power Automate flows that trigger on Case events? What is the standard pattern — flow runs in WAB tenant, calls an external HTTP endpoint?
+> (b) Are Dataverse webhooks (the webhook subscription model) used at WAB today? Any documented approvals or restrictions for external service subscriptions?
+> (c) Is there a documented integration pattern for an agent or RPA bot to be triggered by a Case state change in D365? Please cite any existing integrations that follow this pattern.
+> (d) What WAB security or compliance team owns approvals for external services subscribing to Dataverse events?
+> Please cite the Confluence pages directly.
 
-Batch 4 — Middesk specifically (since it's a hard external dependency)
-Middesk is the single named external API and the agent must integrate with it directly.
+---
 
-"What is the current Middesk integration status at WAB? Is the API live, in pilot, or planned? Which projects use it today?"
+## G4 — Banker-facing UI surface in D365 for AI-drafted content
 
-"What Middesk API endpoints are licensed and accessible? Specifically: Business Search, Business Verification, SOS lookup, Officers, Beneficial Owners, Tax IDs, Watchlist. Is there a sandbox environment?"
+**Why we need this.** Claim C1.15 — the agent drafts a clarification email and needs to surface it to the banker for one-click review-and-send. The mechanism could be an Annotation, an Adaptive Card, an Outlook Connector cue, or a custom Power App embedded in the Case form. Need to know what WAB has done before for similar UI surfaces.
 
-"What is the agreed Middesk response format and field set used by the HOA AI New Account Review bot? Show me the BOT-to-MidDesk request/response sample if it exists."
+**Query to paste into Rovo:**
 
-"What states does Middesk currently cover for SOS lookup, and what is WAB's policy when a state is unsupported or returns a degraded response (e.g., yellow light)?"
+> For WAB's Dynamics 365 CRM and Outlook Connector, please share what is documented about surfacing AI-drafted content (suggested replies, drafted emails, suggested values) to bankers within the Case form or Outlook. Specifically:
+> (a) Has WAB deployed any custom Case form extensions, embedded canvas apps, or Adaptive Cards for AI suggestions or drafted content?
+> (b) The Outlook Connector at WAB — does it support custom pane content beyond CRM lookups (e.g., a "Suggested draft" panel)?
+> (c) Is there a documented pattern for "agent drafts an email → banker reviews → one-click send" in D365 — through the existing send-as-draft flow, through Adaptive Cards, or some other mechanism?
+> (d) For the HOA AI New Account Review project specifically, what is the planned UI surface where bankers will see the bot's outputs and approve them?
+> Please cite the Confluence pages directly.
 
-Batch 5 — D365 CRM surface, IntraFi branch, and ConnectLive intake
-The remaining named technologies — D365 case form, IntraFi, ConnectLive — round out the agent's environment.
+---
 
-"What D365 CRM solution / managed solution owns the AAB New Accounts Request, the HOA case, and the related entities (PMC, Child Company, Control Prong, Accounts Requested)? Who owns the solution, and what is the deployment model (cloud, on-prem, hybrid)?"
+## G5 — UiPath IXP as a callable extraction/classification service
 
-"What Power Platform / D365 components are licensed for the HOA Operations tenant: AI Builder, Copilot Studio, Power Automate premium connectors, Dataverse, custom Power Apps?"
+**Why we need this.** Claim C1.12 — the agent positions UiPath IXP as a callable classifier for the 3 in-scope doc types. Need WAB's actual deployment shape — is IXP exposed as an HTTP API, an Orchestrator queue, or only inside RPA processes? Affects integration design for Iteration 2.
 
-"What is the IntraFi / IDS integration architecture? Specifically, for the Step 4 branch where AABOS hands off to Manager Review and then to Submit-to-IDS — is the IDS path manual or API-driven today? Where does it diverge from the WAB Account path?"
+**Query to paste into Rovo:**
 
-"What is the ConnectLive / Connect Portal new-account intake design? The Account Automation Overview deck shows this path as TBD — has any further design or scoping been done? Who owns Connect Portal?"
+> For WAB's UiPath Automation Platform, specifically the Document Understanding / IXP capability, please share what is documented about programmatic invocation. Specifically:
+> (a) Can UiPath Document Understanding / IXP be invoked synchronously from an external service via an HTTP API, or does invocation require an RPA process queued in Orchestrator?
+> (b) For the existing IXP use cases at WAB (Corporate Trust Indenture, SOC Review Template, HOA Lockbox AI, Settlement Services Onboarding, HOA AI New Account Review), what is the documented invocation pattern — queue-based, API-based, both?
+> (c) Is there a documented "shared service" pattern where one project's IDP extraction model can be called by another project (e.g., Zenon's agent calling the HOA AI New Account Review extractor for Management Agreement)?
+> (d) What are the documented latency expectations for an IXP extraction call?
+> Please cite the Confluence pages and any architecture diagrams.
 
-"What is the relationship between the email-to-D365 case-creation flow and the Outlook plug-in / Banker desktop? Is there an existing tracked-email mechanism, or do bankers manually convert each email into a case?"
+---
 
-How to use this list
-A few notes on running these:
+## G6 — D365 Case state machine and "Waiting on Customer"
 
-Batch 1 is non-negotiable as the first session. Until we know whether the UiPath bot is shipped/paused/dead, everything else is hypothetical. If the bot is in production and WAB is happy with it, our value-add is the upstream parts (banker-side review, ARW pre-fill, clarification email drafting) and the downstream parts (post-AABOS workflow), not the bot's core. If the bot is paused or struggling, Zenon's value-add is replacing it with an LLM-grounded design.
+**Why we need this.** Claim C1.16 — the agent transitions the Case to "Waiting on Customer" on the Yellow path and waits for the client reply. Need to confirm this state exists in WAB's D365 case state machine and that there's a documented reply-routing that re-attaches replies to the same Case.
 
-Volume discrepancy is worth flagging in Batch 1. Slide 17 says ~430 new HOA cases/month. The HOA PDD says ~20-30 accounts/month. Either the PDD is scoped narrower (maybe only specific entity types or only the SOS-validation step), or the deck and the PDD disagree. Resolving this changes the impact sizing materially.
+**Query to paste into Rovo:**
 
-For each Rovo answer, please share the screenshot + the source page title. I'll need page titles to cite in the final architecture doc the way UC1's walkthrough cites sources.
+> For WAB's AAB Operations D365 CRM, please share documentation on the Case state machine and the "Waiting on Customer" state. Specifically:
+> (a) Is "Waiting on Customer" a documented Status or Status Reason value on the Case entity? What are the transitions in and out?
+> (b) When a banker sends an email from a Case to a client and the client replies, how is the reply re-attached to the original Case — through the original email's Conversation Index, through a tracking token in the subject line, through banker-manual association, or some other mechanism?
+> (c) Is there a documented "Convert email to Case" rule that handles reply-routing automatically based on the original Case ID being in the email thread?
+> (d) For the HOA New Account flow specifically, what is the documented case state when the banker is waiting on the client's Cert email reply?
+> Please cite the Confluence pages directly.
 
-Don't run all 24 in one Rovo session. Rovo's response quality degrades when context gets crowded. One batch per session, sharing screenshots, then I'll synthesize between batches.
+---
 
-If a Rovo answer surfaces a page we should read in full, ask Rovo to summarize that specific page (the way you did with "Summarize HOA AI New Account Review PDD and relevant pages" — that's exactly the right pattern).
+## How to record findings
 
-Want me to refine any of these questions before you run Batch 1, or shall I sit tight and wait for the results from the first batch?
+After running these six groups, please either:
+
+1. **Drop screenshots** into this folder with names `rovo_iter1_G1.png`, `rovo_iter1_G2.png`, etc. (one or more per group is fine), and tell me they're in. I'll read them and distill into `rovo_findings_iteration_1.md`.
+2. **Or paste the key text** from each Rovo response directly into `rovo_findings_iteration_1.md` under headings `## G1 Findings`, `## G2 Findings`, etc. — your choice.
+
+Either way, what I need at minimum per group: the **bottom-line answer** Rovo gave, the **Confluence page names** it cited (verbatim), and any **screenshots of diagrams** if Rovo surfaced architectural pictures.
