@@ -1,0 +1,332 @@
+{
+  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex), file in this folder, title + question for the report, render (kpis | bars | line | table) and its column hints. Optional fallback_file runs automatically if the primary fails. Add or swap queries here without touching src/.",
+  "queries": [
+    {
+      "id": "t1_acct_size",
+      "tier": 1,
+      "file": "t1_acct_size.sql",
+      "title": "Account table size and freshness",
+      "question": "How big is the account master, and how fresh is its newest monthly snapshot?",
+      "render": "kpis"
+    },
+    {
+      "id": "t1_call_size",
+      "tier": 1,
+      "file": "t1_call_size.sql",
+      "title": "Call table size, period, and account-link fill",
+      "question": "How many call legs, over what period, and how often is the account id populated?",
+      "render": "kpis"
+    },
+    {
+      "id": "t1_transcript_size",
+      "tier": 1,
+      "file": "t1_transcript_size.sql",
+      "title": "Transcript table size and history depth",
+      "question": "How many utterances and distinct calls do transcripts cover, and how far back does the history go?",
+      "render": "kpis"
+    },
+    {
+      "id": "t1_initiation_mix",
+      "tier": 1,
+      "file": "t1_initiation_mix.sql",
+      "title": "Calls by initiation method",
+      "question": "What share of call legs is inbound vs outbound vs transfer?",
+      "render": "bars",
+      "label_col": "initiationmethod",
+      "value_col": "calls"
+    },
+    {
+      "id": "t1_participants",
+      "tier": 1,
+      "file": "t1_participants.sql",
+      "title": "Who speaks in transcripts",
+      "question": "Utterance split by participant; any value beyond AGENT / CUSTOMER shows up here.",
+      "render": "bars",
+      "label_col": "participantid",
+      "value_col": "utterances"
+    },
+    {
+      "id": "t1_sentiment_mix",
+      "tier": 1,
+      "file": "t1_sentiment_mix.sql",
+      "title": "Utterance sentiment by speaker",
+      "question": "How does per-utterance sentiment split for customers vs agents?",
+      "render": "table"
+    },
+    {
+      "id": "t2_monthly_volume",
+      "tier": 2,
+      "file": "t2_monthly_volume.sql",
+      "title": "Monthly call volume by initiation method (last 12 months)",
+      "question": "Is call volume trending up or down, and what is the inbound share?",
+      "render": "line",
+      "x_col": "month",
+      "series_col": "initiationmethod",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_producttype",
+      "tier": 2,
+      "file": "t2_split_producttype.sql",
+      "title": "Inbound calls by product type (last 6 months)",
+      "question": "Which product lines drive inbound volume?",
+      "render": "bars",
+      "label_col": "producttype",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_vendor",
+      "tier": 2,
+      "file": "t2_split_vendor.sql",
+      "title": "Inbound calls by vendor (last 6 months)",
+      "question": "How is inbound volume spread across servicing vendors?",
+      "render": "bars",
+      "label_col": "vendor",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_site",
+      "tier": 2,
+      "file": "t2_split_site.sql",
+      "title": "Inbound calls by site (last 6 months)",
+      "question": "Onshore vs offshore: where are inbound calls handled?",
+      "render": "bars",
+      "label_col": "site",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_queue",
+      "tier": 2,
+      "file": "t2_split_queue.sql",
+      "title": "Top queues for inbound calls (last 6 months)",
+      "question": "Which queues take the volume (collections vs care vs fraud)?",
+      "render": "bars",
+      "label_col": "queue",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_auth",
+      "tier": 2,
+      "file": "t2_split_auth.sql",
+      "title": "Authentication outcome on inbound calls (last 6 months)",
+      "question": "How often do callers fail authentication (a friction signal)?",
+      "render": "bars",
+      "label_col": "authenticationstatus",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_split_transfer",
+      "tier": 2,
+      "file": "t2_split_transfer.sql",
+      "title": "Transfer type on inbound calls (last 6 months)",
+      "question": "How much inbound volume ends in a transfer, and of which kind?",
+      "render": "bars",
+      "label_col": "transfertype",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_handle_time",
+      "tier": 2,
+      "file": "t2_handle_time.sql",
+      "title": "Handle-time profile, inbound handled calls (last 6 months)",
+      "question": "How long does an inbound call take, end to end?",
+      "render": "kpis"
+    },
+    {
+      "id": "t2_abandon_transfer_monthly",
+      "tier": 2,
+      "file": "t2_abandon_transfer_monthly.sql",
+      "title": "Abandon and transfer rates on inbound calls (last 6 months)",
+      "question": "Are callers being lost to abandons or transfer loops, and is it getting worse?",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": ["pct_abandoned", "pct_transferred"]
+    },
+    {
+      "id": "t2_sentiment_monthly",
+      "tier": 2,
+      "file": "t2_sentiment_monthly.sql",
+      "title": "Average call-level sentiment (last 6 months)",
+      "question": "How do customer and agent sentiment trend month to month?",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": ["avg_customer_sentiment", "avg_agent_sentiment"]
+    },
+    {
+      "id": "t2_utterances_per_call",
+      "tier": 2,
+      "file": "t2_utterances_per_call.sql",
+      "title": "Utterances per transcribed call",
+      "question": "How long are the conversations, in spoken turns?",
+      "render": "bars",
+      "label_col": "turns_bucket",
+      "value_col": "calls"
+    },
+    {
+      "id": "t2_call_minutes",
+      "tier": 2,
+      "file": "t2_call_minutes.sql",
+      "title": "Call duration from transcript timestamps",
+      "question": "How many minutes of conversation does a transcribed call hold?",
+      "render": "kpis"
+    },
+    {
+      "id": "t2_dpd_buckets",
+      "tier": 2,
+      "file": "t2_dpd_buckets.sql",
+      "fallback_file": "t2_dpd_buckets_fallback.sql",
+      "title": "Accounts by delinquency bucket (latest snapshot)",
+      "question": "How many accounts sit in each 30-day past-due bucket, holding how much balance?",
+      "render": "bars",
+      "label_col": "dpd_bucket",
+      "value_col": "accounts"
+    },
+    {
+      "id": "t2_chargeoff_trend",
+      "tier": 2,
+      "file": "t2_chargeoff_trend.sql",
+      "title": "Charge-offs by month (last 24 months of table history)",
+      "question": "How many accounts charge off per month, and for how much?",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": ["accounts_charged_off"]
+    },
+    {
+      "id": "t3_match_rate",
+      "tier": 3,
+      "file": "t3_match_rate.sql",
+      "title": "Call-to-account match rate (inbound, last 6 months)",
+      "question": "Of recent inbound calls, how many carry an account id, and how many of those resolve to the account master? This gates every cross-table analysis.",
+      "render": "kpis"
+    },
+    {
+      "id": "t3_transcript_coverage",
+      "tier": 3,
+      "file": "t3_transcript_coverage.sql",
+      "title": "Transcript coverage of inbound calls, by month (last 6 months)",
+      "question": "What share of inbound calls has at least one transcript row? Coverage is known to be partial - this measures it.",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": ["pct_with_transcript"]
+    },
+    {
+      "id": "t3_repeat_callers",
+      "tier": 3,
+      "file": "t3_repeat_callers.sql",
+      "title": "Repeat calling by account (inbound, last 6 months)",
+      "question": "Do accounts call once or repeatedly? Repeat calls signal friction or unresolved need.",
+      "render": "bars",
+      "label_col": "calls_per_account",
+      "value_col": "accounts"
+    },
+    {
+      "id": "t3_caller_dpd",
+      "tier": 3,
+      "file": "t3_caller_dpd.sql",
+      "fallback_file": "t3_caller_dpd_fallback.sql",
+      "title": "Inbound calls by caller delinquency bucket (last 6 months)",
+      "question": "How much inbound volume comes from delinquent accounts, and does caller mood worsen with bucket depth? Bucket read at the newest account snapshot, which may trail the calls.",
+      "render": "bars",
+      "label_col": "dpd_bucket",
+      "value_col": "calls"
+    },
+    {
+      "id": "t3_payment_language",
+      "tier": 3,
+      "file": "t3_payment_language.sql",
+      "title": "Payment language in customer utterances (inbound, last 1 month)",
+      "question": "In what share of transcribed inbound calls does the customer talk about paying, a plan, hardship, or escalation? A first, crude read of caller intent.",
+      "render": "kpis"
+    },
+    {
+      "id": "t3_conversation_arc",
+      "tier": 3,
+      "file": "t3_conversation_arc.sql",
+      "title": "Customer sentiment across the call (inbound, last 1 month)",
+      "question": "Split each call into thirds by time: does customer sentiment recover by the end of the call?",
+      "render": "table"
+    },
+    {
+      "id": "t3_first_last_speaker",
+      "tier": 3,
+      "file": "t3_first_last_speaker.sql",
+      "title": "Who opens and who closes the call (inbound, last 1 month)",
+      "question": "Conversation shape: who speaks first and last, and how many turns does each side take?",
+      "render": "table"
+    },
+    {
+      "id": "v1_dq1_call_concentration",
+      "tier": 4,
+      "file": "v1_dq1_call_concentration.sql",
+      "title": "Where on the DQ ladder do inbound calls land (same-month join, last 6 months)",
+      "question": "Tests the assumption that most inbound calls concentrate in DQ1. Caller bucket read in the month of the call, not at the latest snapshot.",
+      "render": "bars",
+      "label_col": "dpd_bucket",
+      "value_col": "inbound_calls"
+    },
+    {
+      "id": "v2_vintage_roll",
+      "tier": 4,
+      "file": "v2_vintage_roll.sql",
+      "title": "Roll / cure curve for a DQ1-entrant vintage (11 months of follow-up)",
+      "question": "The empirical stage-migration rates: how a new-delinquency cohort splits into cured, still delinquent, 90+, and charged-off month by month. Replaces assumed multipliers with measured ones.",
+      "render": "line",
+      "x_col": "month_on_book",
+      "y_cols": ["pct_current", "pct_dq1_3", "pct_dq4_plus", "pct_charged_off"]
+    },
+    {
+      "id": "v3_caller_vs_noncaller",
+      "tier": 4,
+      "file": "v3_caller_vs_noncaller.sql",
+      "title": "Outcomes: callers vs non-callers in the same DQ1 vintage",
+      "question": "The forward frame. Same cohort, split by inbound call in the first 3 delinquent months: who charges off, who cures, and how much balance sits in each group. Association, not causation.",
+      "render": "table"
+    },
+    {
+      "id": "v4_balance_at_risk",
+      "tier": 4,
+      "file": "v4_balance_at_risk.sql",
+      "title": "Entry balance by eventual outcome (DQ1 vintage)",
+      "question": "Tests 'balance at DQ1 = balance at risk'. Shows how entry dollars actually split between cure, still-delinquent, and charge-off.",
+      "render": "bars",
+      "label_col": "outcome",
+      "value_col": "entry_balance"
+    },
+    {
+      "id": "v5_payment_after_call",
+      "tier": 4,
+      "file": "v5_payment_after_call.sql",
+      "title": "Payment within 30 days of an inbound call, by bucket (last 6 months)",
+      "question": "The capture / leakage proxy at scale: what share of delinquent-account inbound calls shows no payment within 30 days? Payment read from the next month-end snapshot (proxy).",
+      "render": "bars",
+      "label_col": "dpd_bucket",
+      "value_col": "pct_no_payment_30d"
+    },
+    {
+      "id": "v6_stage_proxy",
+      "tier": 4,
+      "file": "v6_stage_proxy.sql",
+      "title": "Provision-stage proxy from the DQ ladder (latest snapshot)",
+      "question": "IFRS9-style staging shape from the bucket ladder: accounts and balances in stage-1/2/3 proxies. Pair with the vintage roll curve for an evidence-based expected-loss ladder.",
+      "render": "bars",
+      "label_col": "stage_proxy",
+      "value_col": "total_balance"
+    },
+    {
+      "id": "v7_ib_ob_mix",
+      "tier": 4,
+      "file": "v7_ib_ob_mix.sql",
+      "title": "Inbound vs outbound contact mix by bucket (last 6 months)",
+      "question": "Sizes how much of the contact volume inbound-only analysis sees, per delinquency bucket, keeping outbound separate.",
+      "render": "table"
+    },
+    {
+      "id": "v8_reage_proxy",
+      "tier": 4,
+      "file": "v8_reage_proxy.sql",
+      "title": "Deep-bucket resets to current (re-age / cure signal, last 6 months)",
+      "question": "There is no explicit re-age flag here. How often do accounts jump from DQ2+ straight back to current, per bucket? Sizes the re-age question before chasing the flag.",
+      "render": "table"
+    }
+  ]
+}

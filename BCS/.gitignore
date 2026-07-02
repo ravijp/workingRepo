@@ -1,0 +1,10 @@
+# Never commit data extracts or the generated report
+output/
+
+# Local environment
+.venv/
+__pycache__/
+*.pyc
+
+# Real credentials (the .example template IS committed)
+creds.local.cmd

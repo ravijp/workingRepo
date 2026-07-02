@@ -1,0 +1,17 @@
+@echo off
+rem ---------------------------------------------------------------------------
+rem 1. Copy this file to creds.local.cmd   (that name is gitignored - NEVER
+rem    commit real keys; this .example file must stay placeholder-only).
+rem 2. Each time your session keys refresh, paste the three lines you copy
+rem    from the credentials page OVER the three lines below and save.
+rem    The pasted lines are already in this exact `set NAME=value` format.
+rem ---------------------------------------------------------------------------
+
+set AWS_ACCESS_KEY_ID=PASTE_YOUR_KEY_ID_HERE
+set AWS_SECRET_ACCESS_KEY=PASTE_YOUR_SECRET_HERE
+set AWS_SESSION_TOKEN=PASTE_YOUR_SESSION_TOKEN_HERE
+
+rem Optional overrides (uncomment and edit if needed):
+rem set AWS_DEFAULT_REGION=us-east-1
+rem set ATHENA_WORKGROUP=primary
+rem set ATHENA_OUTPUT_S3=s3://your-bucket/athena-results/
