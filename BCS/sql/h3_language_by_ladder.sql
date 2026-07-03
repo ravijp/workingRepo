@@ -1,13 +1,12 @@
--- Validation | Payment language: current vs delinquent callers (newest COMPLETE account month)
--- The unconditioned payment-talk rate is an upper bound (payment words are
--- common on ordinary service calls). This splits customer language by the
--- caller's same-month delinquency state.
--- Month anchored one month BEFORE the account table's newest month: the newest
--- month of the copy is a partial position (days, not a month), so reading it
--- as a month understates buckets and truncates the call sample. Self-heals.
-WITH am AS (
-    SELECT date_add('month', -1,
-               max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))))) AS m1
+-- Tier 7 | Customer language across the full delinquency ladder (one account month)
+-- Extends the current-vs-delinquent split to every bucket: payment, plan /
+-- settlement, hardship, and escalation language rates per bucket. Shows where
+-- on the ladder intent talk turns into hardship talk - the tone shift that
+-- decides which buckets a capture play can still reach.
+-- Month anchored one month before the newest account month (the newest is a
+-- partial copy).
+WITH latest AS (
+    SELECT max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d')))) AS d
     FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
 ),
 snap AS (
@@ -27,9 +26,10 @@ snap AS (
              ELSE 0
            END AS bucket
     FROM "fmt_acct_dba"."fmt_acct_c"
-    CROSS JOIN am
+    CROSS JOIN latest
     WHERE sfx_nbr = 0
-      AND date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) = am.m1
+      AND date_trunc('month', date(date_parse(eff_dt, '%Y%m%d')))
+          = date_add('month', -1, latest.d)
 ),
 acct AS (
     SELECT extnl_acct_id, max(bucket) AS bucket FROM snap GROUP BY 1
@@ -37,10 +37,11 @@ acct AS (
 inb AS (
     SELECT c.contactid, a.bucket
     FROM "contactcenter_bdp_db"."call" c
-    CROSS JOIN am
+    CROSS JOIN latest
     JOIN acct a
       ON trim(cast(c.acctid AS varchar)) = trim(cast(a.extnl_acct_id AS varchar))
-    WHERE cast(date_trunc('month', c."date") AS date) = cast(am.m1 AS date)
+    WHERE cast(date_trunc('month', c."date") AS date)
+          = cast(date_add('month', -1, latest.d) AS date)
       AND c.initiationmethod = 'INBOUND'
       AND c.acctid IS NOT NULL
 ),
@@ -61,13 +62,12 @@ per_call AS (
     FROM cust
     GROUP BY 1
 )
-SELECT CASE WHEN bucket >= 1 THEN 'b. delinquent (bucket 1+)'
-            ELSE 'a. current (bucket 0)' END AS caller_group,
+SELECT bucket AS dpd_bucket,
        count(*) AS calls_scanned,
-       round(100.0 * count_if(pay_n > 0) / count(*), 1) AS pct_calls_mentioning_payment,
-       round(100.0 * count_if(plan_n > 0) / count(*), 1) AS pct_calls_mentioning_plan_or_settlement,
-       round(100.0 * count_if(hard_n > 0) / count(*), 1) AS pct_calls_mentioning_hardship,
-       round(100.0 * count_if(esc_n > 0) / count(*), 1) AS pct_calls_mentioning_escalation
+       round(100.0 * count_if(pay_n > 0) / count(*), 1) AS pct_payment,
+       round(100.0 * count_if(plan_n > 0) / count(*), 1) AS pct_plan_or_settlement,
+       round(100.0 * count_if(hard_n > 0) / count(*), 1) AS pct_hardship,
+       round(100.0 * count_if(esc_n > 0) / count(*), 1) AS pct_escalation
 FROM per_call
 GROUP BY 1
 ORDER BY 1

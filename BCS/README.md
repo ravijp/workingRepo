@@ -8,9 +8,13 @@ A tiered, self-contained analysis kit for three Athena tables:
 | `contactcenter_bdp_db.call` | one row per call leg |
 | `contactcenter_bdp_db.transcript` | one row per spoken utterance |
 
-It runs 35 aggregate queries in four tiers and renders everything into **one
+It runs 62 aggregate queries in eight tiers and renders everything into **one
 HTML file** (`output/bcs_story.html`) — charts, KPI tiles, data tables, and
-every query verbatim in an appendix. Two ways to get the results in:
+every query verbatim in an appendix — plus **one markdown digest**
+(`output/digest.md`) holding every result as compact tables, so a whole run
+can leave the environment in a couple of screenshots. The story tiers (5–8)
+lead the report; each tier's context cards render collapsed. Two ways to get
+the results in:
 
 - **API mode** — the kit runs the queries itself via boto3 (needs AWS network
   access from the machine).
@@ -38,7 +42,27 @@ literal `.sql` file you can paste into the Athena console unchanged, and
 `sql/manifest.json` binds it to a tier, a title, and a chart type. Swapping a
 broken query = replacing one small file.
 
-## The four tiers
+## The eight tiers
+
+Story tiers (lead the report):
+
+5. **The funnel (f-series)** — the headline waterfall: inbound episodes from
+   delinquent accounts that showed payment intent, left without a capture,
+   and charged off — episodes, accounts, and dollars at every stage — plus
+   its stability (by month, by bucket), the dollar trend, the loss-ledger
+   flip, the call-intensity read, two bias gates, and the full-history
+   calibration (f0/f0b) that pins the analysis window.
+6. **Sizing inputs (s-series)** — the measured numbers a dollar model needs:
+   balance per bucket, the leading-edge roll matrix, payment size per
+   capture, the caller vs non-caller payment baseline.
+7. **Conversation deep-dive (h-series)** — does payment language predict
+   payment, who raises payment first, language across the full ladder, call
+   effort per bucket.
+8. **Learned language (n-series)** — SQL-native NLP on outcomes: bigrams
+   learned from paid-vs-leaked calls, the platform's sentiment scores tested
+   against payment, a composed intent score, the agent-offer gap.
+
+Foundation tiers:
 
 1. **Shape of the data** — row counts, date ranges, snapshot freshness, key
    fill rates, who speaks in transcripts.
@@ -53,6 +77,12 @@ broken query = replacing one small file.
    vintage roll/cure curves, caller vs non-caller outcomes, balance-at-risk
    splits, payment-after-call, stage proxies, inbound/outbound mix, re-age
    signal.
+
+Window policy: call-only queries anchor to the call table's newest data;
+queries that JOIN calls to accounts anchor to the ACCOUNT table's newest
+complete month (the account copy trails the calls, and joins past its edge
+silently under-match); the funnel pins literal months chosen for outcome
+runway and confirmed by f0. Each card's explainer states its window and why.
 
 ## One-time setup (BCS VDI, cmd)
 
@@ -105,8 +135,12 @@ story from the downloaded results:
 3. Import and render (works even without boto3 installed):
 
    ```cmd
-   python run_all.py --import --report
+   python run_all.py --import --report --digest
    ```
+
+   `--digest` writes `output\digest.md` — every imported result as compact
+   markdown tables, core queries first. Screenshot that one file to carry a
+   whole run out of the environment; the HTML stays for walking the story.
 
 Imports **merge**: run two queries today and five tomorrow, re-import any
 time — nothing already imported is lost, and a newer download of the same
@@ -118,33 +152,35 @@ If a query errors in the console on a missing column (the deeper `past_due_*`
 fields), paste its `_fallback.sql` variant instead — the importer assigns the
 result to the right query either way.
 
-Suggested paste order (manifest order — tick them off):
+Suggested paste order for a fresh run of the NEW tiers (calibration first —
+check f0 before trusting the funnel's window):
 
 ```text
-Tier 1: t1_acct_size, t1_call_size, t1_transcript_size,
-        t1_initiation_mix, t1_participants, t1_sentiment_mix,
-        t1_acctid_fill_trend
-Tier 2: t2_monthly_volume, t2_split_producttype, t2_split_vendor,
-        t2_split_site, t2_split_queue, t2_split_auth, t2_split_transfer,
-        t2_handle_time, t2_abandon_transfer_monthly, t2_sentiment_monthly,
-        t2_utterances_per_call, t2_call_minutes, t2_dpd_buckets,
-        t2_chargeoff_trend, t2_transfer_episodes
-Tier 3: t3_match_rate, t3_transcript_coverage, t3_repeat_callers,
-        t3_caller_dpd, t3_payment_language, t3_conversation_arc,
-        t3_first_last_speaker, t3_coverage_by_method, t3_delinquent_queues
-Tier 4: v1_dq1_call_concentration, v2_vintage_roll, v3_caller_vs_noncaller,
-        v4_balance_at_risk, v5_payment_after_call, v6_stage_proxy,
-        v7_ib_ob_mix, v8_reage_proxy, v9_payment_language_by_bucket
+Calibrate: f0_period_calibration, f0b_method_history
+Tier 5:    f1_funnel_waterfall, f2_funnel_by_month, f6_funnel_by_bucket,
+           f7_leaked_dollars_by_month, f3_funnel_dollars,
+           f5_calls_before_chargeoff, f4_match_by_auth, f4_coverage_by_bucket
+Tier 6:    s1_balance_by_bucket, s2_roll_matrix, s3_payment_size_by_bucket,
+           s4_caller_payment_lift
+Tier 7:    h1_language_vs_payment, h2_first_payment_mention,
+           h3_language_by_ladder, h4_call_effort_by_bucket
+Tier 8:    n1_discriminative_bigrams, n2_sentiment_vs_payment,
+           n3_intent_score, n4_agent_offer_vs_outcome
+Reruns:    t2_dpd_buckets (primary ladder), t3_match_rate, v1, v5, v7, v9
+           (now anchored to the account table's clock)
 ```
+
+The foundation tiers (t1/t2/t3/v-series) keep their prior results — imports
+merge, so nothing already imported is lost.
 
 Per-card explainer text (window, why, how to read, caveats) lives in
 [sql/explains.md](sql/explains.md) — one `## <query-id>` section per query,
 rendered on the card. Edit the prose there; no code or JSON involved.
 
-If console time is short, the highest-value dozen: the three `t1_*_size`
-queries, `t1_initiation_mix`, `t1_participants`, `t3_match_rate`,
-`t3_transcript_coverage`, `t2_dpd_buckets`, `t2_chargeoff_trend`,
-`v1_dq1_call_concentration`, `v2_vintage_roll`, `v5_payment_after_call`.
+If console time is short, the story core: `f0_period_calibration`,
+`f1_funnel_waterfall`, `f2_funnel_by_month`, `f3_funnel_dollars`,
+`f4_match_by_auth`, `s2_roll_matrix`, `s4_caller_payment_lift`,
+`h1_language_vs_payment`, `n1_discriminative_bigrams`, `n3_intent_score`.
 
 ## Config (env vars, all optional)
 
@@ -169,5 +205,6 @@ queries, `t1_initiation_mix`, `t1_participants`, `t3_match_rate`,
 
 1. Drop `my_query.sql` into `sql/` (fully literal, console-runnable).
 2. Add an entry to `sql/manifest.json`: id, tier, file, title, question,
-   render (`kpis` | `bars` | `line` | `table`) and its column hints.
-3. `run.cmd --fetch` then `run.cmd --report`.
+   render (`kpis` | `bars` | `line` | `table`) with its column hints, and
+   story (`core` | `context` — context cards render collapsed).
+3. `run.cmd --fetch` then `run.cmd --report --digest`.

@@ -8,8 +8,8 @@ API mode (needs AWS network access from this machine):
 
 Manual mode (run queries in the Athena console, download CSVs into
 output/csv/ - see README "Manual mode"):
-  python run_all.py --import            import the CSVs
-  python run_all.py --import --report   import, then build the HTML
+  python run_all.py --import                     import the CSVs
+  python run_all.py --import --report --digest   import, build HTML + digest.md
 
 Steps import lazily, so manual mode works even without boto3 installed.
 """
@@ -30,9 +30,12 @@ def main():
     ap.add_argument("--import", dest="import_csvs", action="store_true",
                     help="import console CSV downloads from output/csv/ (manual mode)")
     ap.add_argument("--report", action="store_true", help="rebuild the HTML report")
+    ap.add_argument("--digest", action="store_true",
+                    help="write output/digest.md - every result as compact markdown")
     args = ap.parse_args()
 
-    run_all = not (args.check or args.fetch or args.import_csvs or args.report)
+    run_all = not (args.check or args.fetch or args.import_csvs or args.report
+                   or args.digest)
 
     if run_all or args.check:
         from src import check_connection
@@ -55,14 +58,18 @@ def main():
         from src import import_csv
         import_csv.main()
 
+    rc = 0
     if run_all or args.report:
         from src import build_report
         rc = build_report.main()
         if rc == 0:
             print(f"\nOpen the story:  {settings.REPORT_HTML}")
-        return rc
 
-    return 0
+    if run_all or args.digest:
+        from src import build_digest
+        rc = build_digest.main() or rc
+
+    return rc
 
 
 if __name__ == "__main__":

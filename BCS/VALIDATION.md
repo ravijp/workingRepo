@@ -1,5 +1,13 @@
 # Validation tier (v-series): what each query settles
 
+> The v-series validates the APPROACH; the story tiers built on top of it run
+> it: the f-series (tier 5) chains the forward frame into one end-to-end
+> funnel with dollars, the s-series (tier 6) measures the sizing inputs the
+> dollar arithmetic needs, the h-series (tier 7) validates the transcript
+> signal, and the n-series (tier 8) learns language features from outcomes.
+> Read this file for why the frame is shaped the way it is; read the tier
+> intros in the report for what each story query adds.
+
 Two candidate sizing approaches exist for reading risk and call value from
 these tables:
 

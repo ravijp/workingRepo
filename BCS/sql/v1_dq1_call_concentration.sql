@@ -1,8 +1,14 @@
--- Validation | Where on the DQ ladder do inbound calls actually land?
--- Tests the assumption "most inbound calls concentrate in DQ1".
--- Joins each inbound call to the caller's delinquency bucket in the SAME month
--- (not the latest snapshot), last 6 call months.
-WITH mx AS (SELECT max("date") AS d FROM "contactcenter_bdp_db"."call"),
+-- Validation | Where on the DQ ladder do inbound calls actually land? (last 6 complete ACCOUNT months)
+-- Tests the assumption "most inbound calls concentrate in DQ1". Joins each
+-- inbound call to the caller's delinquency bucket in the SAME month (not the
+-- latest snapshot). Window anchored to the ACCOUNT table's clock (its newest
+-- complete month): call months past the account copy's edge cannot match and
+-- used to silently drop out, which biased levels. Self-heals on refresh.
+WITH am AS (
+    SELECT date_add('month', -1,
+               max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))))) AS m1
+    FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
+),
 snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -20,9 +26,10 @@ snap AS (
              ELSE 0
            END AS dpd_bucket
     FROM "fmt_acct_dba"."fmt_acct_c"
-    CROSS JOIN mx
+    CROSS JOIN am
     WHERE sfx_nbr = 0
-      AND date(date_parse(eff_dt, '%Y%m%d')) > date_add('month', -8, mx.d)
+      AND date(date_parse(eff_dt, '%Y%m%d')) >= cast(date_add('month', -5, am.m1) AS date)
+      AND date(date_parse(eff_dt, '%Y%m%d')) < cast(date_add('month', 1, am.m1) AS date)
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(dpd_bucket) AS dpd_bucket
@@ -31,8 +38,9 @@ monthly AS (
 inb AS (
     SELECT acctid, cast(date_trunc('month', "date") AS date) AS call_month
     FROM "contactcenter_bdp_db"."call"
-    CROSS JOIN mx
-    WHERE "date" > date_add('month', -6, mx.d)
+    CROSS JOIN am
+    WHERE "date" >= cast(date_add('month', -5, am.m1) AS date)
+      AND "date" < cast(date_add('month', 1, am.m1) AS date)
       AND initiationmethod = 'INBOUND'
       AND acctid IS NOT NULL
 )

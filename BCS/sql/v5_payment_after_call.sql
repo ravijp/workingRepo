@@ -1,10 +1,17 @@
--- Validation | Payment-after-call proxy, by delinquency bucket (last 6 months)
+-- Validation | Payment-after-call proxy, by delinquency bucket (account-clock window)
 -- The capture / leakage proxy at scale: of inbound calls from delinquent
 -- accounts, what share shows NO payment within 30 days of the call?
 -- Payment read from the NEXT month-end snapshot's last-payment date, so it is
 -- a proxy, not a ledger join. If paymt_last_dt fails to parse as a date the
 -- pct columns go null: check the parse before trusting the numbers.
-WITH mx AS (SELECT max("date") AS d FROM "contactcenter_bdp_db"."call"),
+-- Window anchored to the ACCOUNT table's clock: calls span the 5 complete
+-- account months BEFORE its newest complete month, so every call has a full
+-- following-month snapshot for the 30-day payment check. Self-heals on refresh.
+WITH am AS (
+    SELECT date_add('month', -1,
+               max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))))) AS m1
+    FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
+),
 snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -24,9 +31,10 @@ snap AS (
            coalesce(try_cast(paymt_last_dt AS date),
                     try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
-    CROSS JOIN mx
+    CROSS JOIN am
     WHERE sfx_nbr = 0
-      AND date(date_parse(eff_dt, '%Y%m%d')) > date_add('month', -8, mx.d)
+      AND date(date_parse(eff_dt, '%Y%m%d')) >= cast(date_add('month', -5, am.m1) AS date)
+      AND date(date_parse(eff_dt, '%Y%m%d')) < cast(date_add('month', 1, am.m1) AS date)
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, max(pay_dt) AS pay_dt
@@ -36,8 +44,9 @@ inb AS (
     SELECT acctid, "date" AS call_dt,
            cast(date_trunc('month', "date") AS date) AS call_month
     FROM "contactcenter_bdp_db"."call"
-    CROSS JOIN mx
-    WHERE "date" > date_add('month', -6, mx.d)
+    CROSS JOIN am
+    WHERE "date" >= cast(date_add('month', -5, am.m1) AS date)
+      AND "date" < cast(am.m1 AS date)
       AND initiationmethod = 'INBOUND'
       AND acctid IS NOT NULL
 ),

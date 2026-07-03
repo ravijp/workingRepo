@@ -1,8 +1,16 @@
--- Validation | Inbound vs outbound contact mix by delinquency bucket (last 6 months)
+-- Validation | Inbound vs outbound contact mix by delinquency bucket (last 6 complete ACCOUNT months)
 -- Tests "inbound-only misses most contact": for each bucket, how much of the
 -- contact volume is inbound vs outbound vs transfer? Keeps the outbound world
 -- separate (as it should be) but sizes it.
-WITH mx AS (SELECT max("date") AS d FROM "contactcenter_bdp_db"."call"),
+-- Window anchored to the ACCOUNT table's clock (its newest complete month) so
+-- the same-month join is complete in every window month. Self-heals on refresh.
+-- Known finding: OUTBOUND legs carry no account id here, so the outbound
+-- column reads ~0 - that absence is itself the result.
+WITH am AS (
+    SELECT date_add('month', -1,
+               max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))))) AS m1
+    FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
+),
 snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -20,9 +28,10 @@ snap AS (
              ELSE 0
            END AS bucket
     FROM "fmt_acct_dba"."fmt_acct_c"
-    CROSS JOIN mx
+    CROSS JOIN am
     WHERE sfx_nbr = 0
-      AND date(date_parse(eff_dt, '%Y%m%d')) > date_add('month', -8, mx.d)
+      AND date(date_parse(eff_dt, '%Y%m%d')) >= cast(date_add('month', -5, am.m1) AS date)
+      AND date(date_parse(eff_dt, '%Y%m%d')) < cast(date_add('month', 1, am.m1) AS date)
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket
@@ -32,8 +41,9 @@ calls AS (
     SELECT acctid, initiationmethod,
            cast(date_trunc('month', "date") AS date) AS call_month
     FROM "contactcenter_bdp_db"."call"
-    CROSS JOIN mx
-    WHERE "date" > date_add('month', -6, mx.d)
+    CROSS JOIN am
+    WHERE "date" >= cast(date_add('month', -5, am.m1) AS date)
+      AND "date" < cast(date_add('month', 1, am.m1) AS date)
       AND acctid IS NOT NULL
 )
 SELECT s.bucket AS dpd_bucket,

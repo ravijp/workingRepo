@@ -41,6 +41,7 @@ CSV_DIR = os.path.join(OUTPUT_DIR, "csv")  # manual mode: console CSV downloads
 CONNECTION_JSON = os.path.join(OUTPUT_DIR, "00_connection.json")
 STORY_JSON = os.path.join(OUTPUT_DIR, "story_data.json")
 REPORT_HTML = os.path.join(OUTPUT_DIR, "bcs_story.html")
+DIGEST_MD = os.path.join(OUTPUT_DIR, "digest.md")
 
 
 def ensure_output_dir():

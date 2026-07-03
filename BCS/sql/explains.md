@@ -87,7 +87,7 @@ Window: the last 24 months of charge-off dates present in the table, one row per
 
 ## t3_match_rate
 
-Window: inbound legs in the last 6 months of call data vs distinct account ids (sfx_nbr = 0, any snapshot). Why: THE gate - the share of inbound calls that resolve to the account master bounds every cross-table claim. Caveat: match is not correctness; check whether match rate differs for verified vs unverified callers before any agent- or segment-level finding.
+Window: inbound legs in the last 6 complete ACCOUNT months (anchored to the account table's clock, not the call table's) vs distinct account ids (sfx_nbr = 0, any snapshot). Why: THE gate - the share of inbound calls that resolve to the account master bounds every cross-table claim. The account copy trails the calls, so call months past its edge would under-match against a master that cannot know newly opened accounts; anchoring to the account clock removes that dilution and self-heals when the copy refreshes. Caveat: match is not correctness; f4_match_by_auth splits this rate by authentication outcome before any segment-level finding.
 
 ## t3_transcript_coverage
 
@@ -115,7 +115,7 @@ Window: same 1-month slice. Why: conversation-shape sanity check (agent opens, w
 
 ## v1_dq1_call_concentration
 
-Window: inbound legs in the last 6 months of call data, caller bucket joined in the SAME month as the call. Why: tests 'most calls are DQ1' properly. Caveat: call months after the newest account snapshot cannot match and drop out, so totals trail t3_caller_dpd - read the shares, not the levels.
+Window: inbound legs in the last 6 complete ACCOUNT months, caller bucket joined in the SAME month as the call. Why: tests 'most calls are DQ1' properly. The window now rides the account table's clock, so every call month has a complete same-month snapshot - levels and shares are both readable (the old call-clock window silently dropped its newest months). Self-heals when the account copy refreshes.
 
 ## v2_vintage_roll
 
@@ -131,7 +131,7 @@ Cohort: same vintage; entry-month balance split by eventual outcome. Why: tests 
 
 ## v5_payment_after_call
 
-Window: inbound calls joined to the caller's same-month bucket (last 6 months), payment read from the NEXT month-end snapshot's last-payment date. Why: the capture/leakage proxy at scale - delinquent calls followed by no payment within 30 days. Caveats: month-end grain, paymt_last_dt parsing, and months after the newest account snapshot drop out.
+Window: inbound calls joined to the caller's same-month bucket, payment read from the NEXT month-end snapshot's last-payment date. Calls span the 5 complete account months BEFORE the account table's newest complete month, so every call keeps a full following-month snapshot for the 30-day check (the old call-clock window let its newest months drop out or truncate the payment runway). Why: the capture/leakage proxy at scale - delinquent calls followed by no payment within 30 days. Caveats: month-end grain and paymt_last_dt parsing still apply.
 
 ## v6_stage_proxy
 
@@ -139,7 +139,7 @@ Window: the newest account snapshot, charged-off accounts excluded. Why: an IFRS
 
 ## v7_ib_ob_mix
 
-Window: all call legs with an account id, same-month bucket join, last 6 months. Finding: OUTBOUND legs carry no account id in this table (outbound column ~0 everywhere) - the outbound side cannot be read here and needs the dialer/PCDS tables or a phone-number join. That absence is itself the result.
+Window: all call legs with an account id, same-month bucket join, last 6 complete ACCOUNT months (anchored to the account table's clock so every window month joins completely; self-heals on refresh). Finding: OUTBOUND legs carry no account id in this table (outbound column ~0 everywhere) - the outbound side cannot be read here and needs the dialer/PCDS tables or a phone-number join. That absence is itself the result.
 
 ## v8_reage_proxy
 
@@ -163,4 +163,92 @@ Window: inbound calls from delinquent accounts (bucket >= 1, same-month join) ov
 
 ## v9_payment_language_by_bucket
 
-Window: inbound calls in the newest account-snapshot month, customer utterances only, split current vs delinquent caller. Why: conditions the raw payment-language rate on the population that matters - delinquent callers - and contrasts hardship/escalation language. Caveats: one month; lexicon proxy; same staleness pin as all same-month joins.
+Window: inbound calls in the newest COMPLETE account month (one month before the account table's newest month, which is a partial position - days, not a month), customer utterances only, split current vs delinquent caller. Why: conditions the raw payment-language rate on the population that matters - delinquent callers - and contrasts hardship/escalation language. Caveats: one month; lexicon proxy; h-series and n-series extend this read.
+
+## f1_funnel_waterfall
+
+Window: PINNED to call months 2024-07 through 2025-06 (W3) so every episode keeps at least 8 account months of outcome runway before the account copy's edge; outcomes read through 2026-02. Run f0 first - if any W3 month shows broken coverage or fill, move the window before trusting this. Why: the headline. Episodes are first-inbound-per-account-per-day (the reference dedup); each row is a cumulative gate, so the last row is the leakage pool that actually charged off. Balance is the account's balance at its first matched episode, held constant down the funnel - the dollar column is a true waterfall. How to read: stage g (no payment within 30 days) is the leakage candidate pool; stage h is the slice of it that became realized loss. Caveats: payment is the next-snapshot proxy, not a ledger join; the language gate is the v9 lexicon; unmatched episodes (stage b minus c) are measured by f4_match_by_auth.
+
+## f2_funnel_by_month
+
+Window: same pinned W3 as f1, one row per call month. Why: kills the single-month objection - if the stage-to-stage drops hold vintage by vintage, the pooled waterfall is not an artifact of one odd month. How to read: columns are cumulative episode counts; divide any column by the previous one for the per-month gate rate. Caveat: later call months have shorter absolute follow-up beyond the guaranteed 8; chargeoff_8m stays comparable because the 8-month horizon is fixed per episode.
+
+## f6_funnel_by_bucket
+
+Window: same pinned W3 as f1, delinquent gates split by the caller's same-month bucket. Why: early buckets carry the episode volume, late buckets carry the loss probability - this shows where episodes x loss actually concentrates, which decides whether a capture play scopes to DQ1-3 or chases the deep ladder. How to read: divide chargeoff_8m by no_payment_30d per bucket for the leaked-to-loss conversion; compare against v5's payment rates.
+
+## f7_leaked_dollars_by_month
+
+Window: same pinned W3 as f1. Why: the dollar trend behind the funnel end - leaked balances and the charge-off dollars that followed, month by month. This is the chart-shaped version of the story for anyone who will not read a waterfall. Caveat: an account that leaks in several months appears in each; balances are month-end positions, not exposure-at-loss.
+
+## f3_funnel_dollars
+
+Window: charge-offs 2024-08 through 2026-02; calls observed 2024-07 through 2026-01 (each call needs a same-month snapshot and a 30-day payment runway inside the account edge). Why: flips the funnel around to the loss ledger - of realized charge-off dollars, how much sat on accounts the inbound channel touched and did not capture? The funnel-end share is the addressable slice of actual losses. How to read: compare avg_chargeoff across groups - do leaked accounts lose more per account than never-callers? Caveat: the last charge-off months see a shorter call lookback, so 'no inbound call observed' is an upper bound there.
+
+## f5_calls_before_chargeoff
+
+Window: DQ1 entrants 2024-07 through 2025-06 (3-month entry buffer) that charged off by 2026-02; inbound episodes counted from entry to charge-off. Why: the intervention surface on the loss path. '0 calls' losses are unreachable inbound; the 1-2 call bands are where a single missed capture is the whole story; the 11+ band is the repeat-friction narrative at volume. Caveat: episodes require an account id on the call, so the bands are floors.
+
+## f4_match_by_auth
+
+Window: last 5 complete account months (W2-equivalent), inbound calls vs the account master. Why: DPT-style bias gate - the funnel only sees matched calls, and if unmatched calls concentrate among FAILED-authentication callers, every funnel rate is biased toward the easy population. How to read: compare pct_matched_master across authentication outcomes; a large gap means quote funnel rates as 'of matched calls' and treat the unmatched slice as its own population. Caveat: blank authentication is its own signal, not noise.
+
+## f4_coverage_by_bucket
+
+Window: last 5 complete account months, same-month bucket join, inbound calls with an account id. Why: the second bias gate - if deep-bucket calls are transcribed less often, the transcript and language gates undercount exactly where the dollars are. How to read: flat coverage across buckets clears the gate; a slope means bucket-condition the language rates before quoting them.
+
+## f0_period_calibration
+
+Window: the full call history, inbound only, by month. Why: run FIRST. Every windowed claim sits on three constraints - reliable transcript coverage, stable account-id fill, and (for the funnel) 8 months of outcome runway before the account edge. This is the one table that shows all three eras at once and confirms or moves the pinned funnel window. How to read: find where pct_with_transcript stabilises high and pct_with_acctid enters its flat band; the funnel window must sit inside both. The in-progress final month is partial by construction.
+
+## f0b_method_history
+
+Window: the full call history, all initiation methods, by month. Why: the method mix shifted hard over time (recent outbound volume is a fraction of its lifetime share; queue-transfer legs have their own era). A window read across a mix break compares different processes. How to read: find the era boundaries; check no analysis window straddles one. Companion to f0, which is inbound-only.
+
+## s1_balance_by_bucket
+
+Window: the newest account snapshot, charged-off accounts excluded. Why: the per-account dollar input for any sizing arithmetic - a captured payment is one cycle's payment but the balance at risk is the account balance, and average DQ1 balance was an open input until now. How to read: median under average means a heavy tail; use the median for a conservative per-account figure. Caveat: t2_dpd_buckets keeps charged-off stock in, which is why its deep-bucket balances differ.
+
+## s2_roll_matrix
+
+Window: the last 12 complete account months, consecutive-month account-level transitions, already-charged-off accounts excluded from the base. Why: the measured migration rates - where each bucket actually goes next month - replacing pooled balance-flow percentages with account-level ones. This is the multiplier ladder a provision-shaped read needs. How to read: pct_to_current is the cure rate; chain (1 - pct_to_current - pct_improved) down the ladder for a survival-to-loss estimate per bucket. Caveat: month-end grain hides intra-month churn; program re-ages sit inside pct_to_current (see v8).
+
+## s3_payment_size_by_bucket
+
+Window: the last 6 complete account months; a delinquent account-month counts as paying when its month-end last-payment date falls inside that month. Why: the per-capture dollar value - what an incremental captured payment is actually worth per bucket. How to read: multiply an incremental capture count by the median payment for a floor-style dollar figure; the average is drawn up by large one-off payments. Caveat: the month-end snapshot keeps only the LAST payment - a proxy, one payment per month.
+
+## s4_caller_payment_lift
+
+Window: 6 complete account months ending two months before the account table's newest complete month (every observation keeps a full following month). Why: the self-cure baseline. Non-caller delinquent account-months that pay next month anyway are what any capture claim must beat; the caller column on top of it is raw association - callers self-select, so the gap is an upper bound on lift, not a causal effect. How to read: quote the non-caller column as the baseline; treat caller-minus-noncaller as directional only.
+
+## h1_language_vs_payment
+
+Window: one complete account month (anchored two months before the account table's newest month so the 30-day payment window is fully covered). Why: the lexicon validation - if calls WITH payment/plan language do not pay at a visibly higher rate than calls without it, the funnel's language gate is noise and the transcript read needs better features before anyone scales it. How to read: the no-transcript row doubles as a bias check; a payment-rate gap between 'a' and 'b' is the signal the whole language layer stands on.
+
+## h2_first_payment_mention
+
+Window: one complete account month (one before the account table's newest). Why: initiative. Customer-first payment mentions are arriving intent; agent-first mentions are pivots. The split sizes how much of capture depends on agent behaviour vs customer intent - which is the difference between a coaching play and a routing play. Caveat: transcribed delinquent calls only.
+
+## h3_language_by_ladder
+
+Window: one complete account month (one before the account table's newest). Why: extends v9's two-row split to the full ladder - where payment talk gives way to hardship and escalation talk as delinquency deepens. That tone shift marks the buckets a capture play can still reach vs the ones that need a hardship route. Caveat: lexicon proxy; rates are per transcribed call.
+
+## h4_call_effort_by_bucket
+
+Window: one complete account month (one before the account table's newest). Why: the cost side - handle seconds from the call log, turns and minutes from the transcripts, per bucket. Long deep-bucket calls that still leak are effort spent without capture; pair with f6 to see where effort and leakage stack. Caveat: minutes come from the last utterance timestamp; calls without transcripts show call-log time only.
+
+## n1_discriminative_bigrams
+
+Window: one complete account month of delinquent inbound calls, split into paid-within-30-days vs leaked. Why: learns the lexicon from outcomes instead of hand-writing it. Customer bigrams are ranked by how disproportionately they appear on leaked vs paid calls (and the reverse); the survivors are candidate rules for a live transcript read, each arriving with measured support and lift. How to read: leak-markers with high support are review-queue triggers; payment-markers sharpen the intent gate. Caveats: bigrams need 250+ calls of support; filler-word pairs are dropped; correlation with the outcome, not causation - vet each phrase before it becomes a rule.
+
+## n2_sentiment_vs_payment
+
+Window: one complete account month of delinquent inbound calls. Why: the transcripts already carry model-produced NLP - a call-level customer sentiment score. This tests whether that free signal predicts payment beyond the lexicon. How to read: flat payment rates across sentiment bands mean mood adds nothing to intent - worth knowing before anyone builds on sentiment; a slope earns it a slot as a funnel feature. The unscored band doubles as a coverage check.
+
+## n3_intent_score
+
+Window: one complete account month of delinquent, transcribed inbound calls. Why: the pre-production question for the live read - do deterministic signals COMBINED rank calls? The score adds payment language (+1), plan language (+2), customer-first initiative (+1), positive final third (+1), and subtracts hardship (-1) and escalation (-1). How to read: a monotonic climb of payment rate with score is the evidence that a rules engine can already rank calls, and that a proper model read starts from a proven floor. Caveat: the weights are asserted, not fitted - this is a floor, not a model.
+
+## n4_agent_offer_vs_outcome
+
+Window: one complete account month; delinquent calls where the CUSTOMER talks payment. Why: the first measured read of the recoverable slice - customer intent present, and the agent either put a plan/arrangement on the table or did not. The payment-rate gap between the two groups sizes how much leakage looks like a missed offer rather than a missing customer. Caveat: association, not causation - agents may offer more when capture already looks likely; treat the gap as an upper bound and audit a sample before quoting it.

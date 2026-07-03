@@ -1,5 +1,5 @@
 {
-  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
+  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation / 5 funnel / 6 sizing inputs / 7 conversation / 8 learned language), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, story (core | context - context cards render collapsed), and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
   "queries": [
     {
       "id": "t1_acct_size",
@@ -14,7 +14,8 @@
         "oldest_snapshot",
         "newest_snapshot",
         "monthly_snapshots"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t1_call_size",
@@ -30,7 +31,8 @@
         "last_call_date",
         "pct_with_acctid",
         "pct_with_partyid"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t1_transcript_size",
@@ -45,7 +47,8 @@
         "first_calldate",
         "last_calldate",
         "pct_with_text"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t1_initiation_mix",
@@ -59,7 +62,8 @@
       "columns": [
         "initiationmethod",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t1_participants",
@@ -75,7 +79,8 @@
         "utterances",
         "calls",
         "avg_chars_per_utterance"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t1_sentiment_mix",
@@ -88,7 +93,8 @@
         "participantid",
         "sentiment",
         "utterances"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_monthly_volume",
@@ -104,7 +110,8 @@
         "month",
         "initiationmethod",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_producttype",
@@ -118,7 +125,8 @@
       "columns": [
         "producttype",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_vendor",
@@ -132,7 +140,8 @@
       "columns": [
         "vendor",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_site",
@@ -146,7 +155,8 @@
       "columns": [
         "site",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_queue",
@@ -160,7 +170,8 @@
       "columns": [
         "queue",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_auth",
@@ -174,7 +185,8 @@
       "columns": [
         "authenticationstatus",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_split_transfer",
@@ -188,7 +200,8 @@
       "columns": [
         "transfertype",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_handle_time",
@@ -204,7 +217,8 @@
         "p90_handle_s",
         "avg_hold_s",
         "avg_wrapup_s"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_abandon_transfer_monthly",
@@ -223,7 +237,8 @@
         "inbound_calls",
         "pct_abandoned",
         "pct_transferred"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_sentiment_monthly",
@@ -242,7 +257,8 @@
         "avg_customer_sentiment",
         "avg_agent_sentiment",
         "scored_calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_utterances_per_call",
@@ -256,7 +272,8 @@
       "columns": [
         "turns_bucket",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_call_minutes",
@@ -271,7 +288,8 @@
         "median_minutes",
         "p90_minutes",
         "max_minutes"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_dpd_buckets",
@@ -287,7 +305,8 @@
         "dpd_bucket",
         "accounts",
         "total_balance"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t2_chargeoff_trend",
@@ -304,7 +323,8 @@
         "month",
         "accounts_charged_off",
         "chargeoff_amount"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t3_match_rate",
@@ -319,7 +339,8 @@
         "calls_matched_to_account",
         "pct_with_acctid",
         "pct_matched"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t3_transcript_coverage",
@@ -337,7 +358,8 @@
         "inbound_calls",
         "with_transcript",
         "pct_with_transcript"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "t3_repeat_callers",
@@ -352,7 +374,8 @@
         "calls_per_account",
         "accounts",
         "calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_caller_dpd",
@@ -368,7 +391,8 @@
         "dpd_bucket",
         "calls",
         "avg_customer_sentiment"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_payment_language",
@@ -384,7 +408,8 @@
         "pct_calls_mentioning_plan_or_settlement",
         "pct_calls_mentioning_hardship",
         "pct_calls_mentioning_escalation"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_conversation_arc",
@@ -397,7 +422,8 @@
         "call_third",
         "sentiment",
         "utterances"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_first_last_speaker",
@@ -412,7 +438,8 @@
         "calls",
         "avg_customer_turns",
         "avg_agent_turns"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "v1_dq1_call_concentration",
@@ -428,7 +455,8 @@
         "inbound_calls",
         "accounts",
         "pct_of_matched_calls"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "v2_vintage_roll",
@@ -451,7 +479,8 @@
         "pct_dq1_3",
         "pct_dq4_plus",
         "pct_charged_off"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "v3_caller_vs_noncaller",
@@ -467,7 +496,8 @@
         "pct_ever_back_to_current",
         "avg_entry_balance",
         "total_entry_balance"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "v4_balance_at_risk",
@@ -483,7 +513,8 @@
         "accounts",
         "entry_balance",
         "pct_of_entry_balance"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "v5_payment_after_call",
@@ -499,7 +530,8 @@
         "delinquent_inbound_calls",
         "pct_payment_within_30d",
         "pct_no_payment_30d"
-      ]
+      ],
+      "story": "core"
     },
     {
       "id": "v6_stage_proxy",
@@ -515,7 +547,8 @@
         "accounts",
         "total_balance",
         "avg_balance"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "v7_ib_ob_mix",
@@ -531,7 +564,8 @@
         "outbound",
         "other_method",
         "outbound_per_inbound"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "v8_reage_proxy",
@@ -545,7 +579,8 @@
         "account_months_observed",
         "reset_to_current",
         "pct_reset_to_current"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t1_acctid_fill_trend",
@@ -562,7 +597,8 @@
         "month",
         "call_rows",
         "pct_with_acctid"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t2_transfer_episodes",
@@ -581,7 +617,8 @@
         "with_transfer_leg",
         "pct_with_transfer_leg",
         "transfer_legs"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_coverage_by_method",
@@ -595,7 +632,8 @@
         "calls",
         "with_transcript",
         "pct_with_transcript"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "t3_delinquent_queues",
@@ -609,7 +647,8 @@
       "columns": [
         "queue",
         "delinquent_calls"
-      ]
+      ],
+      "story": "context"
     },
     {
       "id": "v9_payment_language_by_bucket",
@@ -625,6 +664,365 @@
         "pct_calls_mentioning_plan_or_settlement",
         "pct_calls_mentioning_hardship",
         "pct_calls_mentioning_escalation"
+      ],
+      "story": "core"
+    },
+    {
+      "id": "f1_funnel_waterfall",
+      "tier": 5,
+      "file": "f1_funnel_waterfall.sql",
+      "title": "The leakage funnel, end to end (Jul 2024 - Jun 2025)",
+      "question": "Inbound episodes from delinquent accounts that showed payment intent, left without a capture, and charged off within 8 months - episodes, accounts, and dollars at every stage.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "stage",
+        "episodes",
+        "accounts",
+        "balance_dollars"
+      ]
+    },
+    {
+      "id": "f2_funnel_by_month",
+      "tier": 5,
+      "file": "f2_funnel_by_month.sql",
+      "title": "The funnel by call-month vintage",
+      "question": "Are the stage-to-stage drops stable month over month, or does one vintage drive the story?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "call_month",
+        "episodes",
+        "matched",
+        "delinquent",
+        "with_transcript",
+        "pay_language",
+        "no_payment_30d",
+        "chargeoff_8m"
+      ]
+    },
+    {
+      "id": "f6_funnel_by_bucket",
+      "tier": 5,
+      "file": "f6_funnel_by_bucket.sql",
+      "title": "The funnel by delinquency bucket",
+      "question": "Where on the ladder do leaked episodes and eventual losses concentrate?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "delinquent_episodes",
+        "with_transcript",
+        "pay_language",
+        "no_payment_30d",
+        "chargeoff_8m"
+      ]
+    },
+    {
+      "id": "f7_leaked_dollars_by_month",
+      "tier": 5,
+      "file": "f7_leaked_dollars_by_month.sql",
+      "title": "Leaked episodes and their dollars, by month",
+      "question": "The dollar trend behind the funnel end: leaked balances and the charge-off dollars that followed.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "call_month",
+        "leaked_episodes",
+        "leaked_accounts",
+        "leaked_balance",
+        "chargeoff_accounts",
+        "chargeoff_dollars"
+      ]
+    },
+    {
+      "id": "f3_funnel_dollars",
+      "tier": 5,
+      "file": "f3_funnel_dollars.sql",
+      "title": "Charge-off dollars: funnel-end callers vs non-callers",
+      "question": "Of realized charge-off dollars, how much sat on accounts the inbound channel touched and did not capture?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "caller_group",
+        "accounts",
+        "chargeoff_dollars",
+        "avg_chargeoff",
+        "pct_of_dollars"
+      ]
+    },
+    {
+      "id": "f5_calls_before_chargeoff",
+      "tier": 5,
+      "file": "f5_calls_before_chargeoff.sql",
+      "title": "Inbound episodes between DQ1 entry and charge-off",
+      "question": "How many chances did the inbound channel get on accounts that went on to charge off?",
+      "render": "bars",
+      "story": "core",
+      "label_col": "episode_band",
+      "value_col": "accounts",
+      "columns": [
+        "episode_band",
+        "accounts",
+        "pct_of_accounts",
+        "total_episodes"
+      ]
+    },
+    {
+      "id": "f4_match_by_auth",
+      "tier": 5,
+      "file": "f4_match_by_auth.sql",
+      "title": "Bias gate: account match by authentication outcome",
+      "question": "Do unmatched calls concentrate among callers who failed authentication - the very population a capture play targets?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "authenticationstatus",
+        "calls",
+        "with_acctid",
+        "pct_with_acctid",
+        "matched_master",
+        "pct_matched_master"
+      ]
+    },
+    {
+      "id": "f4_coverage_by_bucket",
+      "tier": 5,
+      "file": "f4_coverage_by_bucket.sql",
+      "title": "Bias gate: transcript coverage by bucket",
+      "question": "Are deep-bucket calls transcribed as often as early-bucket calls, or does the funnel undercount where the dollars are?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "calls",
+        "with_transcript",
+        "pct_with_transcript"
+      ]
+    },
+    {
+      "id": "f0_period_calibration",
+      "tier": 5,
+      "file": "f0_period_calibration.sql",
+      "title": "Period calibration: fill and coverage by month, full history",
+      "question": "Which months are safe to analyse? Confirms the funnel window: reliable transcript coverage, stable account-id fill, 8 months of outcome runway.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "call_month",
+        "inbound_calls",
+        "pct_with_acctid",
+        "pct_with_transcript"
+      ]
+    },
+    {
+      "id": "f0b_method_history",
+      "tier": 5,
+      "file": "f0b_method_history.sql",
+      "title": "Calibration companion: method mix by month, full history",
+      "question": "When did the initiation-method mix shift? No window should be read across a mix break.",
+      "render": "line",
+      "story": "context",
+      "x_col": "call_month",
+      "series_col": "initiationmethod",
+      "value_col": "calls",
+      "columns": [
+        "call_month",
+        "initiationmethod",
+        "calls"
+      ]
+    },
+    {
+      "id": "s1_balance_by_bucket",
+      "tier": 6,
+      "file": "s1_balance_by_bucket.sql",
+      "title": "Balance profile by bucket (live accounts)",
+      "question": "The per-account dollar input: average and median balance per bucket, charged-off stock excluded.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "accounts",
+        "avg_balance",
+        "median_balance",
+        "total_balance"
+      ]
+    },
+    {
+      "id": "s2_roll_matrix",
+      "tier": 6,
+      "file": "s2_roll_matrix.sql",
+      "title": "Leading-edge roll matrix (12 months)",
+      "question": "Account-level month-over-month migration: cure, improve, hold, roll deeper, charge off - the measured multipliers.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "from_bucket",
+        "account_months",
+        "pct_to_current",
+        "pct_improved",
+        "pct_same",
+        "pct_deeper",
+        "pct_charged_off"
+      ]
+    },
+    {
+      "id": "s3_payment_size_by_bucket",
+      "tier": 6,
+      "file": "s3_payment_size_by_bucket.sql",
+      "title": "Payment size by bucket",
+      "question": "When a delinquent account pays, how much? The per-capture dollar value.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "delinquent_account_months",
+        "with_payment_in_month",
+        "pct_with_payment",
+        "avg_payment",
+        "median_payment"
+      ]
+    },
+    {
+      "id": "s4_caller_payment_lift",
+      "tier": 6,
+      "file": "s4_caller_payment_lift.sql",
+      "title": "Payment next month: callers vs non-callers",
+      "question": "The self-cure baseline every capture claim must beat, and the raw caller association on top of it.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "caller_account_months",
+        "caller_pct_paid_next_month",
+        "noncaller_account_months",
+        "noncaller_pct_paid_next_month"
+      ]
+    },
+    {
+      "id": "h1_language_vs_payment",
+      "tier": 7,
+      "file": "h1_language_vs_payment.sql",
+      "title": "Does payment language predict payment?",
+      "question": "The lexicon validation: 30-day payment rates for delinquent calls with vs without payment/plan language.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "language_group",
+        "delinquent_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "h2_first_payment_mention",
+      "tier": 7,
+      "file": "h2_first_payment_mention.sql",
+      "title": "Who raises payment first?",
+      "question": "Arriving intent vs agent pivot: does the customer or the agent bring up payment on delinquent calls?",
+      "render": "bars",
+      "story": "context",
+      "label_col": "first_mention",
+      "value_col": "calls",
+      "columns": [
+        "first_mention",
+        "calls",
+        "pct_of_calls"
+      ]
+    },
+    {
+      "id": "h3_language_by_ladder",
+      "tier": 7,
+      "file": "h3_language_by_ladder.sql",
+      "title": "Customer language across the full ladder",
+      "question": "Where does intent talk turn into hardship talk as delinquency deepens?",
+      "render": "table",
+      "story": "context",
+      "columns": [
+        "dpd_bucket",
+        "calls_scanned",
+        "pct_payment",
+        "pct_plan_or_settlement",
+        "pct_hardship",
+        "pct_escalation"
+      ]
+    },
+    {
+      "id": "h4_call_effort_by_bucket",
+      "tier": 7,
+      "file": "h4_call_effort_by_bucket.sql",
+      "title": "Call effort by bucket",
+      "question": "Handle time, turns, and minutes per bucket - the cost side of the capture case.",
+      "render": "table",
+      "story": "context",
+      "columns": [
+        "dpd_bucket",
+        "calls",
+        "avg_handle_s",
+        "avg_customer_turns",
+        "avg_minutes"
+      ]
+    },
+    {
+      "id": "n1_discriminative_bigrams",
+      "tier": 8,
+      "file": "n1_discriminative_bigrams.sql",
+      "title": "Learned lexicon: phrases that separate paid from leaked calls",
+      "question": "Data-derived phrase candidates: which customer bigrams mark calls that leaked, and which mark calls that paid?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "side",
+        "bigram",
+        "calls_paid",
+        "calls_leaked",
+        "pct_of_paid_calls",
+        "pct_of_leaked_calls",
+        "lift"
+      ]
+    },
+    {
+      "id": "n2_sentiment_vs_payment",
+      "tier": 8,
+      "file": "n2_sentiment_vs_payment.sql",
+      "title": "Does the platform's NLP predict payment?",
+      "question": "Call-level customer sentiment (model-produced) vs the 30-day payment outcome.",
+      "render": "table",
+      "story": "context",
+      "columns": [
+        "sentiment_band",
+        "delinquent_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "n3_intent_score",
+      "tier": 8,
+      "file": "n3_intent_score.sql",
+      "title": "Can rules rank calls? Intent score vs outcome",
+      "question": "An additive score from language, initiative, and tone - if payment rate climbs with it, a live read can rank calls.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "intent_score",
+        "calls",
+        "pct_payment_within_30d"
+      ]
+    },
+    {
+      "id": "n4_agent_offer_vs_outcome",
+      "tier": 8,
+      "file": "n4_agent_offer_vs_outcome.sql",
+      "title": "The recoverable-miss signal: agent offer vs outcome",
+      "question": "On calls with customer payment intent, does an agent plan-offer move the payment rate? First read of the recoverable slice.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "agent_offer_group",
+        "calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
       ]
     }
   ]

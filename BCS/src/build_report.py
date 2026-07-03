@@ -17,6 +17,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import settings
 
 TIER_INTRO = {
+    5: ("The funnel",
+        "The headline: inbound episodes from delinquent accounts that showed "
+        "payment intent, left without a capture, and charged off - episodes, "
+        "accounts, and dollars at every stage, with the stability, ladder, and "
+        "bias checks that make the waterfall quotable. f0 calibrates the window "
+        "everything else sits on."),
+    6: ("Sizing inputs",
+        "The measured numbers a dollar model needs: balance per bucket, the "
+        "leading-edge roll matrix (account-level migration, not pooled flows), "
+        "payment size per capture, and the self-cure baseline every capture "
+        "claim must beat."),
+    7: ("Conversation deep-dive",
+        "What the transcripts say and whether the lexicon holds: does payment "
+        "language predict payment, who raises payment first, where intent talk "
+        "turns into hardship talk, and what each bucket costs in talk time."),
+    8: ("Learned language",
+        "SQL-native NLP on outcomes: phrases learned from paid-vs-leaked calls "
+        "instead of hand-written lexicons, the platform's own sentiment scores "
+        "tested against payment, a composed intent score that shows rules can "
+        "rank calls, and the agent-offer gap that first sizes the recoverable "
+        "slice. No model endpoint is callable from the console; everything here "
+        "is deterministic and seeds the production transcript read."),
     1: ("The shape of the data",
         "Row counts, time coverage, freshness and key fill rates. This tier says "
         "what the three tables actually contain before any interpretation."),
@@ -35,6 +57,9 @@ TIER_INTRO = {
         "after a call, the provision-stage shape, the inbound/outbound mix, and "
         "the re-age signal."),
 }
+
+# Story tiers lead; the foundation tiers follow.
+TIER_ORDER = (5, 6, 7, 8, 1, 2, 3, 4)
 
 
 def esc(x):
@@ -366,6 +391,10 @@ th, td { padding:5px 12px; text-align:right; border-bottom:1px solid var(--grid)
 th:first-child, td:first-child { text-align:left; }
 th { color:var(--ink-2); font-weight:600; } td { font-variant-numeric:tabular-nums; }
 details { margin:8px 0; } summary { cursor:pointer; color:var(--ink-2); font-size:13px; }
+.ctx { margin:14px 0; }
+.ctx > summary { padding:10px 14px; border:1px dashed var(--border); border-radius:10px;
+                 font-size:14px; font-weight:600; }
+.ctx[open] > summary { margin-bottom:6px; }
 .badge { display:inline-block; font-size:11px; font-weight:700; padding:1px 8px; border-radius:9px;
          color:#fff; text-transform:uppercase; }
 .badge-ok { background:var(--ok); } .badge-fail { background:var(--fail); } .badge-warn { background:var(--warn); }
@@ -409,35 +438,45 @@ def main():
                  "windows anchored to each table's newest data")
     body.append(
         f"<p>A tiered walk through three tables: the card-account master, the contact-centre "
-        f"call log, and the call transcripts. {ok_n} of {total} queries have results. "
+        f"call log, and the call transcripts. The story tiers (5-8: funnel, sizing inputs, "
+        f"conversation, learned language) lead; the foundation tiers (1-4) follow, with "
+        f"context cards collapsed. {ok_n} of {total} queries have results. "
         f"Last update {esc(story.get('generated_at', ''))} ({mode_note}) "
         f"· report built {date.today().isoformat()}.</p></header>"
     )
-    body.append(
-        '<nav><a href="#conn">Connection</a><a href="#tier1">1 · Shape of the data</a>'
-        '<a href="#tier2">2 · Operational picture</a><a href="#tier3">3 · Cross-table story</a>'
-        '<a href="#tier4">4 · Approach validation</a>'
-        '<a href="#appendix">Appendix: queries</a></nav><main>'
-    )
+    nav = ['<nav><a href="#conn">Connection</a>']
+    for tier in TIER_ORDER:
+        nav.append(f'<a href="#tier{tier}">{tier} · {TIER_INTRO[tier][0]}</a>')
+    nav.append('<a href="#appendix">Appendix: queries</a></nav><main>')
+    body.append("".join(nav))
 
     body.append('<h2 id="conn">Connection</h2>')
     body.append(connection_section(conn, manual_mode))
 
-    for tier in (1, 2, 3, 4):
+    for tier in TIER_ORDER:
         title, intro = TIER_INTRO[tier]
+        tier_qs = [q for q in (manifest or stats) if q.get("tier") == tier]
+        if not tier_qs:
+            continue
         body.append(f'<h2 id="tier{tier}">Tier {tier} — {title}</h2><p class="tier-intro">{esc(intro)}</p>')
-        if manifest:
-            # Manifest-driven: every registered query gets a card, run or not.
-            for q in manifest:
-                if q.get("tier") != tier:
-                    continue
+        # Core cards lead; context cards follow, collapsed.
+        ordered = sorted(tier_qs, key=lambda q: q.get("story", "core") != "core")
+        n_ctx = sum(1 for q in ordered if q.get("story", "core") == "context")
+        ctx_opened = False
+        for q in ordered:
+            if manifest:
                 s = stats_by_id.get(q["id"])
                 exp = explains.get(q["id"], "")
-                body.append(render_stat(s, exp) if s else render_pending(q, exp))
-        else:
-            for s in stats:
-                if s.get("tier") == tier:
-                    body.append(render_stat(s, explains.get(s.get("id"), "")))
+                card = render_stat(s, exp) if s else render_pending(q, exp)
+            else:
+                card = render_stat(q, explains.get(q.get("id"), ""))
+            if q.get("story", "core") == "context":
+                if not ctx_opened:
+                    body.append(f'<details class="ctx"><summary>Context cards ({n_ctx})</summary>')
+                    ctx_opened = True
+            body.append(card)
+        if ctx_opened:
+            body.append("</details>")
 
     body.append('<h2 id="appendix">Appendix — every query, verbatim</h2>')
     body.append(appendix(stats))
