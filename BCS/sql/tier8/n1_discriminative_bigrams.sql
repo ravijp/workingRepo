@@ -5,13 +5,18 @@
 -- appear disproportionately on calls with NO payment after; 'b. payment-marker'
 -- phrases on calls that paid. The winners are candidate rules for a live
 -- transcript read - measured on outcomes, not intuition.
+-- SINGLE-PASS by construction: Athena inlines a WITH-CTE at every reference,
+-- so both sides are ranked with window functions in one scan - never two
+-- UNION arms re-running the bigram explosion (the first cut did, and hit the
+-- 30-minute cap). A phrase landing in both top-15s appears once, as a
+-- leak-marker.
 -- Call month anchored two months before the newest account month (complete
 -- following month for the payment check). Bigrams need >= 250 calls support;
 -- pairs of pure filler words are dropped.
--- MEMORY FALLBACK: the bigram explosion is the kit's heaviest text step. If
--- the console returns a memory error, add this line to the delq CTE's WHERE
--- to phrase-mine a deterministic ~25% call sample (rates hold, supports
--- shrink 4x):  AND mod(abs(from_big_endian_64(xxhash64(cast(c.contactid AS varbinary)))), 4) = 0
+-- MEMORY FALLBACK: if the console returns a memory error, add this line to
+-- the delq CTE's WHERE to phrase-mine a deterministic ~25% call sample
+-- (rates hold, supports shrink 4x):
+--   AND mod(abs(from_big_endian_64(xxhash64(cast(c.contactid AS varbinary)))), 4) = 0
 WITH am AS (
     SELECT max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d')))) AS d
     FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
@@ -111,22 +116,21 @@ rated AS (
            round(100.0 * c.calls_leaked / greatest(b.n_leaked, 1), 2) AS pct_of_leaked_calls
     FROM counted c
     CROSS JOIN base b
-)
-SELECT * FROM (
-    SELECT 'a. leak-marker' AS side, bigram, calls_paid, calls_leaked,
+),
+ranked AS (
+    SELECT bigram, calls_paid, calls_leaked,
            pct_of_paid_calls, pct_of_leaked_calls,
-           round(pct_of_leaked_calls / greatest(pct_of_paid_calls, 0.05), 2) AS lift
+           round(pct_of_leaked_calls / greatest(pct_of_paid_calls, 0.05), 2) AS lift_leak,
+           round(pct_of_paid_calls / greatest(pct_of_leaked_calls, 0.05), 2) AS lift_pay,
+           row_number() OVER (ORDER BY pct_of_leaked_calls / greatest(pct_of_paid_calls, 0.05) DESC) AS r_leak,
+           row_number() OVER (ORDER BY pct_of_paid_calls / greatest(pct_of_leaked_calls, 0.05) DESC) AS r_pay
     FROM rated
-    ORDER BY lift DESC
-    LIMIT 15
 )
-UNION ALL
-SELECT * FROM (
-    SELECT 'b. payment-marker' AS side, bigram, calls_paid, calls_leaked,
-           pct_of_paid_calls, pct_of_leaked_calls,
-           round(pct_of_paid_calls / greatest(pct_of_leaked_calls, 0.05), 2) AS lift
-    FROM rated
-    ORDER BY lift DESC
-    LIMIT 15
-)
+SELECT CASE WHEN r_leak <= 15 THEN 'a. leak-marker'
+            ELSE 'b. payment-marker' END AS side,
+       bigram, calls_paid, calls_leaked,
+       pct_of_paid_calls, pct_of_leaked_calls,
+       CASE WHEN r_leak <= 15 THEN lift_leak ELSE lift_pay END AS lift
+FROM ranked
+WHERE r_leak <= 15 OR r_pay <= 15
 ORDER BY side, lift DESC

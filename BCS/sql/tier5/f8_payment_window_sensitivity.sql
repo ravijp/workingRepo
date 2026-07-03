@@ -5,8 +5,16 @@
 -- stage g). The 7-day read is the tight self-cure bracket the value maths
 -- wants; if the pool halves at 60 days, slow payers are being counted as
 -- leaked; if it barely moves, the 30-day read is robust.
--- Payment checks read the call month's AND the next months' snapshots.
--- Same pinned W3 window, dedup, and gates as f1_funnel_waterfall.
+-- SINGLE-PASS by construction: Athena inlines a WITH-CTE at every reference,
+-- so the four windows are computed as one aggregate row and unpivoted -
+-- never four UNION arms re-running the pipeline (the first cut of this query
+-- read 272B rows that way and hit the 30-minute cap).
+-- Account slice is 15 months (f8 needs a 60-day payment runway, not the
+-- funnel's 8-month charge-off runway); the already-charged-off exclusion
+-- reads the call-month row's own chrgoff_dt. Payment checks read the call
+-- month's and following months' snapshots (raw-payment gate; f1 carries the
+-- autopay/NSF-clean gate).
+-- Same pinned W3 window and dedup as f1_funnel_waterfall.
 WITH snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -29,8 +37,8 @@ WITH snap AS (
     FROM "fmt_acct_dba"."fmt_acct_c"
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-07-01'
-      AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
-      AND eff_dt >= '20240701' AND eff_dt < '20260301'
+      AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2025-10-01'
+      AND eff_dt >= '20240701' AND eff_dt < '20251001'
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
@@ -38,8 +46,7 @@ monthly AS (
     FROM snap GROUP BY 1, 2
 ),
 monthly2 AS (
-    SELECT extnl_acct_id, m, bucket, pay_dt AS pay0,
-           min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
+    SELECT extnl_acct_id, m, bucket, co_dt, pay_dt AS pay0,
            lead(pay_dt, 1) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS pay1,
            lead(pay_dt, 2) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS pay2
     FROM monthly
@@ -64,16 +71,6 @@ episodes AS (
     )
     WHERE rn = 1
 ),
-matched AS (
-    SELECT e.acct_key, e.contactid, e.call_dt,
-           s.pay0, s.pay1, s.pay2
-    FROM episodes e
-    JOIN monthly2 s
-      ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
-     AND e.call_month = cast(s.m AS date)
-    WHERE s.bucket >= 1
-      AND (s.acct_co_dt IS NULL OR s.acct_co_dt > e.call_dt)
-),
 tx AS (
     SELECT t.contactid,
            count_if(t.participantid = 'CUSTOMER' AND t.content IS NOT NULL
@@ -81,54 +78,58 @@ tx AS (
                         'pay|paid|payment|settle|payment plan|arrangement|work something out'))
                AS pay_utts
     FROM "contactcenter_bdp_db"."transcript" t
-    JOIN (SELECT DISTINCT contactid FROM matched) d
-      ON t.contactid = d.contactid
+    JOIN (SELECT DISTINCT contactid FROM episodes) d ON t.contactid = d.contactid
      AND t.effdt >= '2024-07-01' AND t.effdt < '2025-07-02'
     GROUP BY 1
 ),
 flags AS (
-    SELECT m.call_dt,
-           CASE WHEN (m.pay0 IS NOT NULL AND m.pay0 >= m.call_dt
-                      AND m.pay0 <= date_add('day', 7, m.call_dt))
-                  OR (m.pay1 IS NOT NULL AND m.pay1 >= m.call_dt
-                      AND m.pay1 <= date_add('day', 7, m.call_dt))
-                THEN 1 ELSE 0 END AS paid_7,
-           CASE WHEN (m.pay0 IS NOT NULL AND m.pay0 >= m.call_dt
-                      AND m.pay0 <= date_add('day', 14, m.call_dt))
-                  OR (m.pay1 IS NOT NULL AND m.pay1 >= m.call_dt
-                      AND m.pay1 <= date_add('day', 14, m.call_dt))
-                THEN 1 ELSE 0 END AS paid_14,
-           CASE WHEN (m.pay0 IS NOT NULL AND m.pay0 >= m.call_dt
-                      AND m.pay0 <= date_add('day', 30, m.call_dt))
-                  OR (m.pay1 IS NOT NULL AND m.pay1 >= m.call_dt
-                      AND m.pay1 <= date_add('day', 30, m.call_dt))
-                THEN 1 ELSE 0 END AS paid_30,
-           CASE WHEN (m.pay0 IS NOT NULL AND m.pay0 >= m.call_dt
-                      AND m.pay0 <= date_add('day', 60, m.call_dt))
-                  OR (m.pay1 IS NOT NULL AND m.pay1 >= m.call_dt
-                      AND m.pay1 <= date_add('day', 60, m.call_dt))
-                  OR (m.pay2 IS NOT NULL AND m.pay2 >= m.call_dt
-                      AND m.pay2 <= date_add('day', 60, m.call_dt))
-                THEN 1 ELSE 0 END AS paid_60
-    FROM matched m
-    JOIN tx t ON m.contactid = t.contactid
-    WHERE t.pay_utts > 0
+    SELECT
+        CASE WHEN (s.pay0 IS NOT NULL AND s.pay0 >= e.call_dt
+                   AND s.pay0 <= date_add('day', 7, e.call_dt))
+               OR (s.pay1 IS NOT NULL AND s.pay1 >= e.call_dt
+                   AND s.pay1 <= date_add('day', 7, e.call_dt))
+             THEN 1 ELSE 0 END AS paid_7,
+        CASE WHEN (s.pay0 IS NOT NULL AND s.pay0 >= e.call_dt
+                   AND s.pay0 <= date_add('day', 14, e.call_dt))
+               OR (s.pay1 IS NOT NULL AND s.pay1 >= e.call_dt
+                   AND s.pay1 <= date_add('day', 14, e.call_dt))
+             THEN 1 ELSE 0 END AS paid_14,
+        CASE WHEN (s.pay0 IS NOT NULL AND s.pay0 >= e.call_dt
+                   AND s.pay0 <= date_add('day', 30, e.call_dt))
+               OR (s.pay1 IS NOT NULL AND s.pay1 >= e.call_dt
+                   AND s.pay1 <= date_add('day', 30, e.call_dt))
+             THEN 1 ELSE 0 END AS paid_30,
+        CASE WHEN (s.pay0 IS NOT NULL AND s.pay0 >= e.call_dt
+                   AND s.pay0 <= date_add('day', 60, e.call_dt))
+               OR (s.pay1 IS NOT NULL AND s.pay1 >= e.call_dt
+                   AND s.pay1 <= date_add('day', 60, e.call_dt))
+               OR (s.pay2 IS NOT NULL AND s.pay2 >= e.call_dt
+                   AND s.pay2 <= date_add('day', 60, e.call_dt))
+             THEN 1 ELSE 0 END AS paid_60
+    FROM episodes e
+    JOIN monthly2 s
+      ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
+     AND e.call_month = cast(s.m AS date)
+    JOIN tx t
+      ON e.contactid = t.contactid
+    WHERE s.bucket >= 1
+      AND (s.co_dt IS NULL OR s.co_dt > e.call_dt)
+      AND t.pay_utts > 0
+),
+agg AS (
+    SELECT count(*) AS n,
+           count_if(paid_7 = 0) AS no7,
+           count_if(paid_14 = 0) AS no14,
+           count_if(paid_30 = 0) AS no30,
+           count_if(paid_60 = 0) AS no60
+    FROM flags
 )
-SELECT 7 AS pay_window_days,
-       count(*) AS intent_episodes,
-       count_if(paid_7 = 0) AS episodes_no_payment,
-       round(100.0 * count_if(paid_7 = 0) / count(*), 1) AS pct_no_payment
-FROM flags
-UNION ALL
-SELECT 14, count(*), count_if(paid_14 = 0),
-       round(100.0 * count_if(paid_14 = 0) / count(*), 1)
-FROM flags
-UNION ALL
-SELECT 30, count(*), count_if(paid_30 = 0),
-       round(100.0 * count_if(paid_30 = 0) / count(*), 1)
-FROM flags
-UNION ALL
-SELECT 60, count(*), count_if(paid_60 = 0),
-       round(100.0 * count_if(paid_60 = 0) / count(*), 1)
-FROM flags
+SELECT w.pay_window_days,
+       a.n AS intent_episodes,
+       w.no_pay AS episodes_no_payment,
+       round(100.0 * w.no_pay / greatest(a.n, 1), 1) AS pct_no_payment
+FROM agg a
+CROSS JOIN UNNEST(ARRAY[
+    ROW(7, a.no7), ROW(14, a.no14), ROW(30, a.no30), ROW(60, a.no60)
+]) AS w (pay_window_days, no_pay)
 ORDER BY 1
