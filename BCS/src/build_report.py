@@ -207,15 +207,33 @@ def render_stat(stat):
     else:
         card.append(data_table(cols, rows, open_by_default=True))
 
-    meta = f'{stat.get("elapsed_s", "?")}s · {stat.get("scanned_mb", "?")} MB scanned'
+    if stat.get("source_csv"):
+        meta = f'imported from {stat["source_csv"]} at {stat.get("imported_at", "?")}'
+    else:
+        meta = f'{stat.get("elapsed_s", "?")}s · {stat.get("scanned_mb", "?")} MB scanned'
     if stat.get("used_fallback"):
         meta += " · fallback query used"
     card.append(f'<p class="meta">{esc(meta)}</p></section>')
     return "".join(card)
 
 
-def connection_section(conn):
+def render_pending(q):
+    return (
+        f'<section class="card pending" id="{esc(q["id"])}">'
+        f"<h3>{esc(q.get('title'))}</h3><p class='q'>{esc(q.get('question'))}</p>"
+        f'<p class="todo">Not run yet — paste <code>sql\\{esc(q["file"])}</code> into the '
+        f"Athena query editor, download the results CSV into <code>output\\csv\\</code>, "
+        f"then run <code>python run_all.py --import --report</code>.</p></section>"
+    )
+
+
+def connection_section(conn, manual_mode=False):
     if not conn:
+        if manual_mode:
+            return ("<section class='card'><h3>Connection</h3><p class='q'>"
+                    "Manual mode: results were run in the Athena console and imported "
+                    "from CSV downloads. No live AWS connection was used from this "
+                    "machine.</p></section>")
         return ("<section class='card'><h3>Connection check</h3><p class='q'>"
                 "No connection check found (run src/check_connection.py).</p></section>")
     parts = ['<section class="card"><h3>Connection check</h3>']
@@ -283,6 +301,9 @@ h2 { font-size:20px; margin:34px 0 4px; }
 .card h3 { font-size:16px; } .q { color:var(--ink-2); font-size:13.5px; margin:4px 0 12px; max-width:75ch; }
 .meta { color:var(--muted); font-size:12px; margin-top:8px; }
 .failed { color:var(--fail); font-size:13.5px; }
+.pending { border-style:dashed; }
+.todo { color:var(--ink-2); font-size:13.5px; }
+.todo code { font-size:12.5px; }
 .tiles { display:flex; flex-wrap:wrap; gap:12px; margin:8px 0; }
 .tile { border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:130px; }
 .tile-v { font-size:22px; font-weight:600; } .tile-l { font-size:12px; color:var(--ink-2); }
@@ -316,7 +337,8 @@ footer { max-width:1020px; margin:30px auto 0; padding:0 24px; color:var(--muted
 
 def main():
     if not os.path.exists(settings.STORY_JSON):
-        print(f"No {settings.STORY_JSON} found — run src/fetch_story.py first.")
+        print(f"No {settings.STORY_JSON} found — run a fetch (--fetch) or a CSV "
+              f"import (--import) first.")
         return 1
     with open(settings.STORY_JSON, encoding="utf-8") as f:
         story = json.load(f)
@@ -325,16 +347,28 @@ def main():
         with open(settings.CONNECTION_JSON, encoding="utf-8") as f:
             conn = json.load(f)
 
+    try:
+        with open(settings.MANIFEST, encoding="utf-8") as f:
+            manifest = json.load(f)["queries"]
+    except (OSError, ValueError, KeyError):
+        manifest = []
+
     stats = story.get("stats", [])
+    stats_by_id = {s.get("id"): s for s in stats}
+    manual_mode = story.get("mode") == "manual-csv"
     ok_n = sum(1 for s in stats if s.get("status") == "ok")
+    total = len(manifest) or len(stats)
 
     body = ['<div class="viz-root"><header>']
     body.append("<h1>BCS data story — accounts × calls × transcripts</h1>")
+    mode_note = ("results run in the Athena console and imported from CSV downloads"
+                 if manual_mode else
+                 "windows anchored to each table's newest data")
     body.append(
         f"<p>A tiered walk through three tables: the card-account master, the contact-centre "
-        f"call log, and the call transcripts. {ok_n} of {len(stats)} stats ran clean. "
-        f"Data pulled {esc(story.get('generated_at', ''))} (windows anchored to each table's "
-        f"newest data) · report built {date.today().isoformat()}.</p></header>"
+        f"call log, and the call transcripts. {ok_n} of {total} queries have results. "
+        f"Last update {esc(story.get('generated_at', ''))} ({mode_note}) "
+        f"· report built {date.today().isoformat()}.</p></header>"
     )
     body.append(
         '<nav><a href="#conn">Connection</a><a href="#tier1">1 · Shape of the data</a>'
@@ -344,14 +378,22 @@ def main():
     )
 
     body.append('<h2 id="conn">Connection</h2>')
-    body.append(connection_section(conn))
+    body.append(connection_section(conn, manual_mode))
 
     for tier in (1, 2, 3, 4):
         title, intro = TIER_INTRO[tier]
         body.append(f'<h2 id="tier{tier}">Tier {tier} — {title}</h2><p class="tier-intro">{esc(intro)}</p>')
-        for s in stats:
-            if s.get("tier") == tier:
-                body.append(render_stat(s))
+        if manifest:
+            # Manifest-driven: every registered query gets a card, run or not.
+            for q in manifest:
+                if q.get("tier") != tier:
+                    continue
+                s = stats_by_id.get(q["id"])
+                body.append(render_stat(s) if s else render_pending(q))
+        else:
+            for s in stats:
+                if s.get("tier") == tier:
+                    body.append(render_stat(s))
 
     body.append('<h2 id="appendix">Appendix — every query, verbatim</h2>')
     body.append(appendix(stats))
