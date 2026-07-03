@@ -129,7 +129,8 @@ SELECT w.pay_window_days,
        w.no_pay AS episodes_no_payment,
        round(100.0 * w.no_pay / greatest(a.n, 1), 1) AS pct_no_payment
 FROM agg a
-CROSS JOIN UNNEST(ARRAY[
-    ROW(7, a.no7), ROW(14, a.no14), ROW(30, a.no30), ROW(60, a.no60)
-]) AS w (pay_window_days, no_pay)
+CROSS JOIN UNNEST(
+    ARRAY[7, 14, 30, 60],
+    ARRAY[a.no7, a.no14, a.no30, a.no60]
+) AS w (pay_window_days, no_pay)
 ORDER BY 1
