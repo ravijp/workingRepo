@@ -1,9 +1,10 @@
 -- Validation | Payment-after-call proxy, by delinquency bucket (account-clock window)
 -- The capture / leakage proxy at scale: of inbound calls from delinquent
 -- accounts, what share shows NO payment within 30 days of the call?
--- Payment read from the NEXT month-end snapshot's last-payment date, so it is
--- a proxy, not a ledger join. If paymt_last_dt fails to parse as a date the
--- pct columns go null: check the parse before trusting the numbers.
+-- Payment read from the call month's OR the next month's last-payment date
+-- (a next-month-only check misclassifies same-month payers as leaked), so it
+-- is a proxy, not a ledger join. If paymt_last_dt fails to parse as a date
+-- the pct columns go null: check the parse before trusting the numbers.
 -- Window anchored to the ACCOUNT table's clock: calls span the 5 complete
 -- account months BEFORE its newest complete month, so every call has a full
 -- following-month snapshot for the 30-day payment check. Self-heals on refresh.
@@ -51,7 +52,14 @@ inb AS (
       AND acctid IS NOT NULL
 ),
 j AS (
-    SELECT s.bucket, i.call_dt, nxt.pay_dt
+    SELECT s.bucket,
+           CASE WHEN (s.pay_dt IS NOT NULL
+                      AND s.pay_dt >= i.call_dt
+                      AND s.pay_dt <= date_add('day', 30, i.call_dt))
+                  OR (nxt.pay_dt IS NOT NULL
+                      AND nxt.pay_dt >= i.call_dt
+                      AND nxt.pay_dt <= date_add('day', 30, i.call_dt))
+                THEN 1 ELSE 0 END AS paid
     FROM inb i
     JOIN monthly s
       ON trim(cast(i.acctid AS varchar)) = trim(cast(s.extnl_acct_id AS varchar))
@@ -63,14 +71,8 @@ j AS (
 )
 SELECT bucket AS dpd_bucket,
        count(*) AS delinquent_inbound_calls,
-       round(100.0 * count_if(pay_dt IS NOT NULL
-                              AND pay_dt >= call_dt
-                              AND pay_dt <= date_add('day', 30, call_dt)) / count(*), 1)
-           AS pct_payment_within_30d,
-       round(100.0 * count_if(pay_dt IS NULL
-                              OR pay_dt < call_dt
-                              OR pay_dt > date_add('day', 30, call_dt)) / count(*), 1)
-           AS pct_no_payment_30d
+       round(100.0 * count_if(paid = 1) / count(*), 1) AS pct_payment_within_30d,
+       round(100.0 * count_if(paid = 0) / count(*), 1) AS pct_no_payment_30d
 FROM j
 GROUP BY 1
 ORDER BY 1

@@ -2,11 +2,16 @@
 
 > The v-series validates the APPROACH; the story tiers built on top of it run
 > it: the f-series (tier 5) chains the forward frame into one end-to-end
-> funnel with dollars, the s-series (tier 6) measures the sizing inputs the
-> dollar arithmetic needs, the h-series (tier 7) validates the transcript
-> signal, and the n-series (tier 8) learns language features from outcomes.
-> Read this file for why the frame is shaped the way it is; read the tier
-> intros in the report for what each story query adds.
+> funnel with dollars plus its calibration, sensitivity, and bias gates; the
+> s-series (tier 6) measures the sizing inputs the dollar arithmetic needs,
+> including the capture-gate contamination band; the o-series (tier 9) locates
+> the leakage operationally and carries the volume control total; the x-series
+> (tier 10) follows outcomes forward, including the within-account
+> captured-vs-leaked contrast (the self-controlled causality read); the
+> h-series (tier 7) validates the transcript signal; the n-series (tier 8)
+> learns language features from outcomes. Read this file for why the frame is
+> shaped the way it is; read the tier intros in the report for what each
+> story query adds.
 
 Two candidate sizing approaches exist for reading risk and call value from
 these tables:

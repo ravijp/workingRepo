@@ -1,9 +1,11 @@
--- Tier 5 | Leaked episodes and their dollars, by call month (W3: 2024-07 .. 2025-06)
--- The dollar trend of the funnel end: per call month, the episodes that reached
--- 'no payment within 30 days' (leaked), the accounts and month-end balances
--- behind them, and how many of those accounts (and dollars) charged off within
--- 8 months of the call. An account that leaks in several months appears in
--- each of those months. Same pinned W3 window, dedup, and gates as f1.
+-- Tier 10 | Time from first leaked episode to charge-off (validates the 8-month horizon)
+-- The funnel counts a charge-off within 8 months of the call. This shows the
+-- actual distribution: per account, months from the FIRST leaked episode
+-- (f1 stage-g definition) to the charge-off date, for accounts that charged
+-- off inside the observable window. If most losses land within 8 months, the
+-- funnel's horizon is right; a fat 9-12 tail means it undercounts.
+-- Caveat: right-censored - later first-leaks have less observable runway, so
+-- read the shape, not the absolute tail. Same pinned W3 window as f1.
 WITH snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -21,8 +23,6 @@ WITH snap AS (
              ELSE 0
            END AS bucket,
            try_cast(chrgoff_dt AS date) AS co_dt,
-           try_cast(chrgoff_amt AS double) AS co_amt,
-           try_cast(acct_bal_amt AS double) AS bal,
            coalesce(try_cast(paymt_last_dt AS date),
                     try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
@@ -32,13 +32,12 @@ WITH snap AS (
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
-           max(co_amt) AS co_amt, max(bal) AS bal, max(pay_dt) AS pay_dt
+           max(pay_dt) AS pay_dt
     FROM snap GROUP BY 1, 2
 ),
 monthly2 AS (
-    SELECT extnl_acct_id, m, bucket, bal,
+    SELECT extnl_acct_id, m, bucket, pay_dt,
            min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
-           max(co_amt) OVER (PARTITION BY extnl_acct_id) AS acct_co_amt,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt
     FROM monthly
 ),
@@ -62,8 +61,8 @@ episodes AS (
     WHERE rn = 1
 ),
 matched AS (
-    SELECT e.acct_key, e.contactid, e.call_dt, e.call_month,
-           s.bal, s.acct_co_dt, s.acct_co_amt, s.next_pay_dt
+    SELECT e.acct_key, e.contactid, e.call_dt,
+           s.acct_co_dt, s.pay_dt, s.next_pay_dt
     FROM episodes e
     JOIN monthly2 s
       ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
@@ -83,33 +82,36 @@ tx AS (
     GROUP BY 1
 ),
 leaked AS (
-    SELECT m.call_month, m.acct_key, m.bal, m.acct_co_amt,
-           CASE WHEN m.acct_co_dt IS NOT NULL
-                 AND m.acct_co_dt > m.call_dt
-                 AND m.acct_co_dt <= date_add('month', 8, m.call_dt)
-                THEN 1 ELSE 0 END AS co_8m
+    SELECT m.acct_key, m.call_dt, m.acct_co_dt
     FROM matched m
     JOIN tx t ON m.contactid = t.contactid
     WHERE t.pay_utts > 0
-      AND NOT (m.next_pay_dt IS NOT NULL
-               AND m.next_pay_dt >= m.call_dt
-               AND m.next_pay_dt <= date_add('day', 30, m.call_dt))
+      AND NOT ((m.pay_dt IS NOT NULL
+                AND m.pay_dt >= m.call_dt
+                AND m.pay_dt <= date_add('day', 30, m.call_dt))
+            OR (m.next_pay_dt IS NOT NULL
+                AND m.next_pay_dt >= m.call_dt
+                AND m.next_pay_dt <= date_add('day', 30, m.call_dt)))
 ),
-per_am AS (
-    SELECT call_month, acct_key,
-           count(*) AS eps,
-           max(bal) AS bal,
-           max(co_8m) AS co,
-           max(acct_co_amt) AS co_amt
+per_acct AS (
+    SELECT acct_key,
+           date_diff('month', min(call_dt), max(acct_co_dt)) AS months_to_co
     FROM leaked
-    GROUP BY 1, 2
+    WHERE acct_co_dt IS NOT NULL
+      AND acct_co_dt < DATE '2026-03-01'
+    GROUP BY 1
+    HAVING max(acct_co_dt) > min(call_dt)
 )
-SELECT call_month,
-       sum(eps) AS leaked_episodes,
-       count(*) AS leaked_accounts,
-       round(sum(bal), 0) AS leaked_balance,
-       sum(co) AS chargeoff_accounts,
-       round(sum(CASE WHEN co = 1 THEN co_amt END), 0) AS chargeoff_dollars
-FROM per_am
+SELECT CASE
+         WHEN months_to_co <= 1 THEN 'a. 0-1 months'
+         WHEN months_to_co <= 3 THEN 'b. 2-3 months'
+         WHEN months_to_co <= 5 THEN 'c. 4-5 months'
+         WHEN months_to_co <= 8 THEN 'd. 6-8 months'
+         WHEN months_to_co <= 12 THEN 'e. 9-12 months'
+         ELSE 'f. 13+ months'
+       END AS months_band,
+       count(*) AS accounts,
+       round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct_of_accounts
+FROM per_acct
 GROUP BY 1
 ORDER BY 1

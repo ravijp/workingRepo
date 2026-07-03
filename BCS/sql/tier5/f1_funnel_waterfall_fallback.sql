@@ -1,20 +1,12 @@
--- Tier 5 | The leakage funnel, end to end (W3: call months 2024-07 .. 2025-06)
--- The headline result. One waterfall, episodes + accounts + dollars per stage:
---   a. inbound call legs
---   b. episodes = first inbound per account per day (the reference dedup)
---   c. episode matched to the caller's SAME-MONTH account snapshot
---   d. account delinquent that month (bucket 1+, not yet charged off)
---   e. episode has a transcript
---   f. customer payment / plan / settlement language in the transcript
---   g. no payment within 30 days of the call (next-snapshot last-payment proxy)
---   h. account charged off within 8 months of the call
--- W3 ends 2025-06 so every episode keeps >= 8 account months of outcome runway
--- before the account copy's edge (newest snapshot 2026-03-07); outcomes read
--- through 2026-02. Balance = the account's balance at its first matched episode
--- month, held constant down the funnel, so the dollar column is a true waterfall.
--- Stages b..h are cumulative: each row satisfies every gate above it.
+-- Tier 5 | FALLBACK for f1_funnel_waterfall: raw-payment capture gate
+-- Use ONLY if the primary errors on the autopay/NSF columns
+-- (atmtc_paymt_last_dt / nsf_last_paymt_dt absent in this copy).
+-- Identical stages and windows; the capture gate counts any payment dated
+-- within 30 days of the call (call month OR next month), without the
+-- autopay/NSF exclusion - so stage h slightly UNDERSTATES leakage.
+-- s6_payment_contamination sizes that gap; note 'fallback gate' when quoting.
 WITH snap AS (
-    SELECT extnl_acct_id,
+    SELECT extnl_acct_id, eff_dt,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
            CASE
              WHEN past_due_271_up_amt  > 0 THEN 10
@@ -40,11 +32,12 @@ WITH snap AS (
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
-           max(bal) AS bal, max(pay_dt) AS pay_dt
+           max_by(bal, eff_dt) AS bal,
+           max(pay_dt) AS pay_dt
     FROM snap GROUP BY 1, 2
 ),
 monthly2 AS (
-    SELECT extnl_acct_id, m, bucket, bal,
+    SELECT extnl_acct_id, m, bucket, bal, pay_dt,
            min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt
     FROM monthly
@@ -55,6 +48,7 @@ inb AS (
     FROM "contactcenter_bdp_db"."call"
     WHERE initiationmethod = 'INBOUND'
       AND "date" >= DATE '2024-07-01' AND "date" < DATE '2025-07-01'
+      AND coalesce(cast(producttype AS varchar), '') <> 'BUSINESS_CARD'
 ),
 episodes AS (
     SELECT acct_key, contactid, call_dt,
@@ -70,10 +64,19 @@ episodes AS (
 ),
 matched AS (
     SELECT e.acct_key, e.contactid, e.call_dt, e.call_month,
-           s.bucket, s.bal, s.acct_co_dt, s.next_pay_dt,
+           s.bucket, s.bal, s.acct_co_dt,
            CASE WHEN s.bucket >= 1
                  AND (s.acct_co_dt IS NULL OR s.acct_co_dt > e.call_dt)
-                THEN 1 ELSE 0 END AS is_delq
+                THEN 1 ELSE 0 END AS is_delq,
+           CASE WHEN
+                  (s.pay_dt IS NOT NULL
+                   AND s.pay_dt >= e.call_dt
+                   AND s.pay_dt <= date_add('day', 30, e.call_dt))
+                OR
+                  (s.next_pay_dt IS NOT NULL
+                   AND s.next_pay_dt >= e.call_dt
+                   AND s.next_pay_dt <= date_add('day', 30, e.call_dt))
+                THEN 1 ELSE 0 END AS captured
     FROM episodes e
     LEFT JOIN monthly2 s
       ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
@@ -84,14 +87,18 @@ tx AS (
            count_if(t.participantid = 'CUSTOMER' AND t.content IS NOT NULL
                     AND regexp_like(lower(t.content),
                         'pay|paid|payment|settle|payment plan|arrangement|work something out'))
-               AS pay_utts
+               AS pay_utts,
+           count_if(t.participantid = 'CUSTOMER' AND t.content IS NOT NULL
+                    AND regexp_like(lower(t.content),
+                        'settle|settlement|payment plan|arrangement|work something out|i.ll pay|i will pay|going to pay|gonna pay|when i get paid|payday'))
+               AS strict_utts
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN (SELECT DISTINCT contactid FROM matched WHERE is_delq = 1) d
       ON t.contactid = d.contactid
     GROUP BY 1
 ),
 ep AS (
-    SELECT m.acct_key, m.call_dt,
+    SELECT m.acct_key,
            min_by(m.bal, CASE WHEN m.bal IS NOT NULL THEN m.call_dt END)
                OVER (PARTITION BY m.acct_key) AS acct_bal,
            CASE
@@ -99,41 +106,61 @@ ep AS (
              WHEN m.is_delq = 0 THEN 3
              WHEN t.contactid IS NULL THEN 4
              WHEN t.pay_utts = 0 THEN 5
-             WHEN m.next_pay_dt IS NOT NULL
-                  AND m.next_pay_dt >= m.call_dt
-                  AND m.next_pay_dt <= date_add('day', 30, m.call_dt) THEN 6
+             WHEN m.captured = 1 THEN 6
              WHEN m.acct_co_dt IS NULL
                   OR m.acct_co_dt > date_add('month', 8, m.call_dt) THEN 7
              ELSE 8
-           END AS deepest
+           END AS deepest,
+           CASE
+             WHEN m.bucket IS NULL THEN 2
+             WHEN m.is_delq = 0 THEN 3
+             WHEN t.contactid IS NULL THEN 4
+             WHEN t.strict_utts = 0 THEN 5
+             WHEN m.captured = 1 THEN 6
+             WHEN m.acct_co_dt IS NULL
+                  OR m.acct_co_dt > date_add('month', 8, m.call_dt) THEN 7
+             ELSE 8
+           END AS deepest_strict
     FROM matched m
     LEFT JOIN tx t ON m.contactid = t.contactid
 ),
 exploded AS (
-    SELECT e.acct_key, e.acct_bal, s.stage_no
+    SELECT e.acct_key, e.acct_bal, s.stage_no,
+           CASE WHEN e.deepest_strict >= s.stage_no THEN 1 ELSE 0 END AS strict_ok
     FROM ep e
     CROSS JOIN UNNEST(sequence(2, e.deepest)) AS s (stage_no)
 ),
 acct_stage AS (
-    SELECT stage_no, acct_key, count(*) AS eps, max(acct_bal) AS bal
+    SELECT stage_no, acct_key, count(*) AS eps,
+           sum(strict_ok) AS eps_strict, max(acct_bal) AS bal
     FROM exploded GROUP BY 1, 2
 )
 SELECT 'a. inbound call legs' AS stage,
        count(*) AS episodes,
+       CAST(NULL AS bigint) AS episodes_strict,
        CAST(NULL AS bigint) AS accounts,
        CAST(NULL AS double) AS balance_dollars
 FROM inb
 UNION ALL
+SELECT 'b. legs with an account id',
+       count(*),
+       CAST(NULL AS bigint),
+       count(DISTINCT acct_key),
+       CAST(NULL AS double)
+FROM inb
+WHERE acct_key IS NOT NULL AND acct_key <> ''
+UNION ALL
 SELECT CASE stage_no
-         WHEN 2 THEN 'b. episodes (first inbound per account per day)'
-         WHEN 3 THEN 'c. matched to same-month account snapshot'
-         WHEN 4 THEN 'd. delinquent in call month (bucket 1+)'
-         WHEN 5 THEN 'e. has transcript'
-         WHEN 6 THEN 'f. customer payment or plan language'
-         WHEN 7 THEN 'g. no payment within 30 days'
-         WHEN 8 THEN 'h. charged off within 8 months'
+         WHEN 2 THEN 'c. episodes (first inbound per account per day)'
+         WHEN 3 THEN 'd. matched to same-month account snapshot'
+         WHEN 4 THEN 'e. delinquent in call month (bucket 1+)'
+         WHEN 5 THEN 'f. has transcript'
+         WHEN 6 THEN 'g. customer payment or plan language'
+         WHEN 7 THEN 'h. no clean payment within 30 days'
+         WHEN 8 THEN 'i. charged off within 8 months'
        END AS stage,
        sum(eps) AS episodes,
+       sum(eps_strict) AS episodes_strict,
        count(*) AS accounts,
        round(sum(CASE WHEN stage_no >= 3 THEN bal END), 0) AS balance_dollars
 FROM acct_stage

@@ -44,9 +44,12 @@ monthly AS (
 ),
 delq AS (
     SELECT c.contactid,
-           CASE WHEN nxt.pay_dt IS NOT NULL
-                 AND nxt.pay_dt >= c."date"
-                 AND nxt.pay_dt <= date_add('day', 30, c."date")
+           CASE WHEN (s.pay_dt IS NOT NULL
+                      AND s.pay_dt >= c."date"
+                      AND s.pay_dt <= date_add('day', 30, c."date"))
+                  OR (nxt.pay_dt IS NOT NULL
+                      AND nxt.pay_dt >= c."date"
+                      AND nxt.pay_dt <= date_add('day', 30, c."date"))
                 THEN 1 ELSE 0 END AS paid_30d
     FROM "contactcenter_bdp_db"."call" c
     CROSS JOIN am

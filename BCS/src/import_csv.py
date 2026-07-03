@@ -175,7 +175,7 @@ def main(argv=None):  # argv accepted for symmetry with the other steps
     if pending:
         print(f"Still pending ({len(pending)}):")
         for q in pending:
-            print(f"  {q['id']:<28} paste sql\\{q['file']}")
+            print(f"  {q['id']:<28} paste sql\\{q['file'].replace('/', chr(92))}")
     print("\nBuild the report with:  python run_all.py --report")
     return 0
 

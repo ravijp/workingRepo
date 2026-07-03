@@ -1,9 +1,13 @@
--- Tier 5 | The funnel by call-month vintage (W3: 2024-07 .. 2025-06)
--- Stability check on f1: the same cumulative gates, one row per call month.
--- A funnel read off one pooled year can hide a drifting month; this shows
--- whether the stage-to-stage drops are stable vintage by vintage.
--- Columns are cumulative episode counts: matched >= delinquent >= ... >= chargeoff_8m.
--- Same windows, dedup, gates, and provisos as f1_funnel_waterfall.
+-- Tier 10 | The within-account contrast: same account, captured vs leaked episode
+-- The causality answer the caller/non-caller splits cannot give. Take accounts
+-- that had BOTH a captured and a leaked intent episode inside the window (the
+-- f1 chain through the language gate), and compare what the account looked
+-- like the month after each episode type - within the same account, so the
+-- who-calls selection effect cancels. If the after-capture month is visibly
+-- better than the after-leak month for the same customers, capture moves the
+-- account, not just one payment. Self-controlled, still not a randomized
+-- trial (timing within the delinquency spell differs) - the strongest
+-- non-experimental read these tables allow. Same pinned W3 window as f1.
 WITH snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -34,8 +38,10 @@ monthly AS (
     FROM snap GROUP BY 1, 2
 ),
 monthly2 AS (
-    SELECT extnl_acct_id, m, bucket,
+    SELECT extnl_acct_id, m, bucket, pay_dt,
            min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
+           lead(bucket) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_bucket,
+           lead(m) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_m,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt
     FROM monthly
 ),
@@ -59,15 +65,22 @@ episodes AS (
     WHERE rn = 1
 ),
 matched AS (
-    SELECT e.acct_key, e.contactid, e.call_dt, e.call_month,
-           s.bucket, s.acct_co_dt, s.next_pay_dt,
-           CASE WHEN s.bucket >= 1
-                 AND (s.acct_co_dt IS NULL OR s.acct_co_dt > e.call_dt)
-                THEN 1 ELSE 0 END AS is_delq
+    SELECT e.acct_key, e.contactid, e.call_dt,
+           s.bucket, s.next_bucket, s.next_m, s.m, s.acct_co_dt,
+           CASE WHEN (s.pay_dt IS NOT NULL
+                      AND s.pay_dt >= e.call_dt
+                      AND s.pay_dt <= date_add('day', 30, e.call_dt))
+                  OR (s.next_pay_dt IS NOT NULL
+                      AND s.next_pay_dt >= e.call_dt
+                      AND s.next_pay_dt <= date_add('day', 30, e.call_dt))
+                THEN 1 ELSE 0 END AS captured
     FROM episodes e
-    LEFT JOIN monthly2 s
+    JOIN monthly2 s
       ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
      AND e.call_month = cast(s.m AS date)
+    WHERE s.bucket >= 1
+      AND (s.acct_co_dt IS NULL OR s.acct_co_dt > e.call_dt)
+      AND s.next_m = date_add('month', 1, s.m)
 ),
 tx AS (
     SELECT t.contactid,
@@ -76,35 +89,28 @@ tx AS (
                         'pay|paid|payment|settle|payment plan|arrangement|work something out'))
                AS pay_utts
     FROM "contactcenter_bdp_db"."transcript" t
-    JOIN (SELECT DISTINCT contactid FROM matched WHERE is_delq = 1) d
-      ON t.contactid = d.contactid
+    JOIN (SELECT DISTINCT contactid FROM matched) d ON t.contactid = d.contactid
     GROUP BY 1
 ),
-ep AS (
-    SELECT m.call_month,
-           CASE
-             WHEN m.bucket IS NULL THEN 2
-             WHEN m.is_delq = 0 THEN 3
-             WHEN t.contactid IS NULL THEN 4
-             WHEN t.pay_utts = 0 THEN 5
-             WHEN m.next_pay_dt IS NOT NULL
-                  AND m.next_pay_dt >= m.call_dt
-                  AND m.next_pay_dt <= date_add('day', 30, m.call_dt) THEN 6
-             WHEN m.acct_co_dt IS NULL
-                  OR m.acct_co_dt > date_add('month', 8, m.call_dt) THEN 7
-             ELSE 8
-           END AS deepest
+intent AS (
+    SELECT m.acct_key, m.captured, m.bucket, m.next_bucket
     FROM matched m
-    LEFT JOIN tx t ON m.contactid = t.contactid
+    JOIN tx t ON m.contactid = t.contactid
+    WHERE t.pay_utts > 0
+),
+both_kinds AS (
+    SELECT acct_key
+    FROM intent
+    GROUP BY 1
+    HAVING max(captured) = 1 AND min(captured) = 0
 )
-SELECT call_month,
-       count(*) AS episodes,
-       count_if(deepest >= 3) AS matched,
-       count_if(deepest >= 4) AS delinquent,
-       count_if(deepest >= 5) AS with_transcript,
-       count_if(deepest >= 6) AS pay_language,
-       count_if(deepest >= 7) AS no_payment_30d,
-       count_if(deepest >= 8) AS chargeoff_8m
-FROM ep
+SELECT CASE WHEN i.captured = 1 THEN 'a. captured episodes (same accounts)'
+            ELSE 'b. leaked episodes (same accounts)' END AS episode_group,
+       count(*) AS intent_episodes,
+       count(DISTINCT i.acct_key) AS accounts,
+       round(100.0 * count_if(i.next_bucket = 0) / count(*), 1) AS pct_current_next_month,
+       round(100.0 * count_if(i.next_bucket > i.bucket) / count(*), 1) AS pct_deeper_next_month
+FROM intent i
+JOIN both_kinds b ON i.acct_key = b.acct_key
 GROUP BY 1
 ORDER BY 1

@@ -8,6 +8,10 @@
 -- Call month anchored two months before the newest account month (complete
 -- following month for the payment check). Bigrams need >= 250 calls support;
 -- pairs of pure filler words are dropped.
+-- MEMORY FALLBACK: the bigram explosion is the kit's heaviest text step. If
+-- the console returns a memory error, add this line to the delq CTE's WHERE
+-- to phrase-mine a deterministic ~25% call sample (rates hold, supports
+-- shrink 4x):  AND mod(abs(from_big_endian_64(xxhash64(cast(c.contactid AS varbinary)))), 4) = 0
 WITH am AS (
     SELECT max(date_trunc('month', date(date_parse(eff_dt, '%Y%m%d')))) AS d
     FROM "fmt_acct_dba"."fmt_acct_c" WHERE sfx_nbr = 0
@@ -42,9 +46,12 @@ monthly AS (
 ),
 delq AS (
     SELECT c.contactid,
-           CASE WHEN nxt.pay_dt IS NOT NULL
-                 AND nxt.pay_dt >= c."date"
-                 AND nxt.pay_dt <= date_add('day', 30, c."date")
+           CASE WHEN (s.pay_dt IS NOT NULL
+                      AND s.pay_dt >= c."date"
+                      AND s.pay_dt <= date_add('day', 30, c."date"))
+                  OR (nxt.pay_dt IS NOT NULL
+                      AND nxt.pay_dt >= c."date"
+                      AND nxt.pay_dt <= date_add('day', 30, c."date"))
                 THEN 1 ELSE 0 END AS paid_30d
     FROM "contactcenter_bdp_db"."call" c
     CROSS JOIN am

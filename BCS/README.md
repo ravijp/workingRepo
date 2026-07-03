@@ -8,13 +8,14 @@ A tiered, self-contained analysis kit for three Athena tables:
 | `contactcenter_bdp_db.call` | one row per call leg |
 | `contactcenter_bdp_db.transcript` | one row per spoken utterance |
 
-It runs 62 aggregate queries in eight tiers and renders everything into **one
-HTML file** (`output/bcs_story.html`) — charts, KPI tiles, data tables, and
-every query verbatim in an appendix — plus **one markdown digest**
-(`output/digest.md`) holding every result as compact tables, so a whole run
-can leave the environment in a couple of screenshots. The story tiers (5–8)
-lead the report; each tier's context cards render collapsed. Two ways to get
-the results in:
+It runs 86 aggregate queries in ten tiers and renders everything into **one
+HTML file** (`output/bcs_story.html`) — an executive headline strip, charts,
+KPI tiles, data tables, and every query verbatim in an appendix — plus **one
+markdown digest** (`output/digest.md`) holding every result as compact
+tables, so a whole run can leave the environment in a couple of screenshots.
+The story tiers lead the report in walk order (5 funnel, 6 sizing, 9
+operations, 10 follow-through, 7 conversation, 8 learned language); each
+tier's context cards render collapsed. Two ways to get the results in:
 
 - **API mode** — the kit runs the queries itself via boto3 (needs AWS network
   access from the machine).
@@ -30,9 +31,10 @@ BCS/
 ├─ run.cmd                 cmd wrapper: creds + venv + run (stable)
 ├─ creds.local.cmd.example credential template -> copy to creds.local.cmd
 ├─ config/settings.py      region/workgroup/paths, env-overridable (stable)
-├─ src/                    athena runner, check, fetch, csv import, report (stable)
-├─ sql/                    ONE FILE PER QUERY + manifest.json  <- iterate here
-└─ output/                 gitignored: JSONs + bcs_story.html
+├─ src/                    athena runner, check, fetch, csv import, report, digest (stable)
+├─ sql/                    manifest.json + explains.md; ONE FILE PER QUERY  <- iterate here
+│  └─ tier1/ .. tier10/    queries grouped by tier (manifest carries the tierN/ path)
+└─ output/                 gitignored: JSONs + bcs_story.html + digest.md
    └─ csv/                 manual mode: drop console CSV downloads here
 ```
 
@@ -60,7 +62,14 @@ Story tiers (lead the report):
    effort per bucket.
 8. **Learned language (n-series)** — SQL-native NLP on outcomes: bigrams
    learned from paid-vs-leaked calls, the platform's sentiment scores tested
-   against payment, a composed intent score, the agent-offer gap.
+   against payment, a composed intent score, the agent-offer gap, early-intent
+   latency.
+9. **Where it leaks — operations (o-series)** — payment-after-call by queue,
+   vendor × site, transfer paths, and abandons with recontact: leakage as a
+   place someone owns.
+10. **Follow-through — outcome curves (x-series)** — captured vs leaked three
+    months later, repeat-leak chains, time from first leak to charge-off (the
+    8-month-horizon check).
 
 Foundation tiers:
 
@@ -159,13 +168,25 @@ check f0 before trusting the funnel's window):
 Calibrate: f0_period_calibration, f0b_method_history
 Tier 5:    f1_funnel_waterfall, f2_funnel_by_month, f6_funnel_by_bucket,
            f7_leaked_dollars_by_month, f3_funnel_dollars,
-           f5_calls_before_chargeoff, f4_match_by_auth, f4_coverage_by_bucket
+           f5_calls_before_chargeoff, f4_match_by_auth, f4_coverage_by_bucket,
+           f8_payment_window_sensitivity, f9_episode_chaining
+Gates:     s6_payment_contamination (probes the autopay/NSF columns f1 needs),
+           f4_scope_split, f4_bucket_drift
 Tier 6:    s1_balance_by_bucket, s2_roll_matrix, s3_payment_size_by_bucket,
-           s4_caller_payment_lift
+           s4_caller_payment_lift, s5_balance_roll_matrix
 Tier 7:    h1_language_vs_payment, h2_first_payment_mention,
-           h3_language_by_ladder, h4_call_effort_by_bucket
+           h3_language_by_ladder, h4_call_effort_by_bucket,
+           h5_triage_language, h6_promise_language
 Tier 8:    n1_discriminative_bigrams, n2_sentiment_vs_payment,
-           n3_intent_score, n4_agent_offer_vs_outcome
+           n3_intent_score, n4_agent_offer_vs_outcome, n5_early_intent
+Tier 9:    o1_capture_by_queue, o2_capture_by_vendor_site,
+           o3_delinquent_transfer_paths, o4_delinquent_abandons,
+           o5_capture_by_auth, o6_coll_volume_monthly
+Tier 10:   x1_leaked_vs_captured_roll, x2_repeat_leak_chains,
+           x3_time_to_chargeoff_after_leak, x4_within_account_contrast,
+           x5_payment_latency
+Tier 3/4:  t3_unmatched_queues, t3_call_gap_days, v10_cure_durability,
+           v11_multi_vintage_roll
 Reruns:    t2_dpd_buckets (primary ladder), t3_match_rate, v1, v5, v7, v9
            (now anchored to the account table's clock)
 ```
@@ -178,9 +199,10 @@ Per-card explainer text (window, why, how to read, caveats) lives in
 rendered on the card. Edit the prose there; no code or JSON involved.
 
 If console time is short, the story core: `f0_period_calibration`,
-`f1_funnel_waterfall`, `f2_funnel_by_month`, `f3_funnel_dollars`,
+`s6_payment_contamination` (the gate probe), `f1_funnel_waterfall`,
+`f2_funnel_by_month`, `f8_payment_window_sensitivity`, `f3_funnel_dollars`,
 `f4_match_by_auth`, `s2_roll_matrix`, `s4_caller_payment_lift`,
-`h1_language_vs_payment`, `n1_discriminative_bigrams`, `n3_intent_score`.
+`h1_language_vs_payment`, `x4_within_account_contrast`, `n3_intent_score`.
 
 ## Config (env vars, all optional)
 

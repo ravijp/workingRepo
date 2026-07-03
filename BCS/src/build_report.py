@@ -19,15 +19,21 @@ from config import settings
 TIER_INTRO = {
     5: ("The funnel",
         "The headline: inbound episodes from delinquent accounts that showed "
-        "payment intent, left without a capture, and charged off - episodes, "
-        "accounts, and dollars at every stage, with the stability, ladder, and "
-        "bias checks that make the waterfall quotable. f0 calibrates the window "
-        "everything else sits on."),
+        "payment intent, left without a clean capture, and charged off - "
+        "episodes, accounts, and dollars at every stage, with the stability, "
+        "ladder, sensitivity, and bias checks that make the waterfall "
+        "quotable. f0 calibrates the window everything else sits on. Standing "
+        "caveats, stated once: the inbound universe here is a candidate lower "
+        "bound until it reconciles to the ops-reported call volumes; forward "
+        "(funnel) numbers and backward (loss-ledger) numbers are different "
+        "frames and are never mixed."),
     6: ("Sizing inputs",
         "The measured numbers a dollar model needs: balance per bucket, the "
         "leading-edge roll matrix (account-level migration, not pooled flows), "
-        "payment size per capture, and the self-cure baseline every capture "
-        "claim must beat."),
+        "payment size per capture, the capture-gate contamination band, and "
+        "the self-cure baseline every capture claim must beat. Every caller "
+        "vs non-caller split here is association, not causation - callers "
+        "self-select."),
     7: ("Conversation deep-dive",
         "What the transcripts say and whether the lexicon holds: does payment "
         "language predict payment, who raises payment first, where intent talk "
@@ -39,6 +45,21 @@ TIER_INTRO = {
         "rank calls, and the agent-offer gap that first sizes the recoverable "
         "slice. No model endpoint is callable from the console; everything here "
         "is deterministic and seeds the production transcript read."),
+    9: ("Where it leaks - operations",
+        "The same payment-after-call read, cut by how the call was handled: "
+        "queue, vendor and site, authentication outcome, transfer paths, and "
+        "abandons with recontact - plus the collections-queue control total "
+        "the whole denominator reconciles against. This is where leakage "
+        "stops being a rate and becomes a place someone owns. Handling splits "
+        "are leads to audit, not scorecards - call mix differs by cut."),
+    10: ("Follow-through - outcome curves",
+        "What happened next: captured vs leaked episodes three months on, the "
+        "same contrast WITHIN accounts that had both (the self-controlled "
+        "causality read), payment latency inside the capture window, "
+        "repeat-leak chains, and the time from first leak to charge-off that "
+        "validates the funnel's 8-month horizon. The evidence that turns the "
+        "funnel into a value case. Association still rides every split here "
+        "except the within-account contrast, which controls who calls."),
     1: ("The shape of the data",
         "Row counts, time coverage, freshness and key fill rates. This tier says "
         "what the three tables actually contain before any interpretation."),
@@ -58,8 +79,10 @@ TIER_INTRO = {
         "the re-age signal."),
 }
 
-# Story tiers lead; the foundation tiers follow.
-TIER_ORDER = (5, 6, 7, 8, 1, 2, 3, 4)
+# Story tiers lead: what leaks (5), what it's worth (6), where in the
+# operation (9), what follows (10), why the signal is trusted (7), can rules
+# rank it live (8). Foundation tiers follow.
+TIER_ORDER = (5, 6, 9, 10, 7, 8, 1, 2, 3, 4)
 
 
 def esc(x):
@@ -281,10 +304,40 @@ def render_pending(q, explain=""):
     return (
         f'<section class="card pending" id="{esc(q["id"])}">'
         f"<h3>{esc(q.get('title'))}</h3><p class='q'>{esc(q.get('question'))}</p>{exp}"
-        f'<p class="todo">Not run yet — paste <code>sql\\{esc(q["file"])}</code> into the '
+        f'<p class="todo">Not run yet — paste <code>sql\\{esc(q["file"].replace("/", chr(92)))}</code> into the '
         f"Athena query editor, download the results CSV into <code>output\\csv\\</code>, "
         f"then run <code>python run_all.py --import --report</code>.</p></section>"
     )
+
+
+def exec_strip(stats_by_id):
+    """One-screen headline above the tiers: the funnel end in five numbers."""
+    f1 = stats_by_id.get("f1_funnel_waterfall")
+    if not f1 or f1.get("status") != "ok":
+        return ""
+    h_row = next((r for r in f1.get("rows", [])
+                  if str(r.get("stage", "")).startswith("h.")), None)
+    if not h_row:
+        return ""
+    tiles = {
+        "leaked_episodes": h_row.get("episodes"),
+        "leaked_episodes_strict": h_row.get("episodes_strict"),
+        "leaked_accounts": h_row.get("accounts"),
+        "leaked_balance_dollars": h_row.get("balance_dollars"),
+    }
+    f3 = stats_by_id.get("f3_funnel_dollars")
+    if f3 and f3.get("status") == "ok":
+        a_row = next((r for r in f3.get("rows", [])
+                      if str(r.get("caller_group", "")).startswith("a.")), None)
+        if a_row:
+            tiles["leaked_to_chargeoff_dollars"] = a_row.get("chargeoff_dollars")
+            tiles["pct_of_realized_co_dollars"] = a_row.get("pct_of_dollars")
+    return ("<section class='card'><h3>The headline</h3>"
+            "<p class='q'>The funnel end in one strip: episodes that showed intent and "
+            "left without a clean capture (loose and strict lexicon), the accounts and "
+            "balance behind them, and the realized charge-off dollars they preceded "
+            "(loss-ledger flip, group a). The full waterfall and every check follow.</p>"
+            + kpi_tiles(tiles) + "</section>")
 
 
 def connection_section(conn, manual_mode=False):
@@ -452,6 +505,7 @@ def main():
 
     body.append('<h2 id="conn">Connection</h2>')
     body.append(connection_section(conn, manual_mode))
+    body.append(exec_strip(stats_by_id))
 
     for tier in TIER_ORDER:
         title, intro = TIER_INTRO[tier]

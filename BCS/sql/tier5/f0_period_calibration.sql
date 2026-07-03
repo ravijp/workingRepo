@@ -18,7 +18,9 @@ WITH inb AS (
 t AS (SELECT DISTINCT contactid FROM "contactcenter_bdp_db"."transcript")
 SELECT inb.call_month,
        count(*) AS inbound_calls,
-       round(100.0 * count_if(inb.acctid IS NOT NULL) / count(*), 1) AS pct_with_acctid,
+       round(100.0 * count_if(inb.acctid IS NOT NULL
+                              AND trim(cast(inb.acctid AS varchar)) <> '') / count(*), 1)
+           AS pct_with_acctid,
        round(100.0 * count(t.contactid) / count(*), 1) AS pct_with_transcript
 FROM inb
 LEFT JOIN t ON inb.contactid = t.contactid

@@ -48,7 +48,7 @@ inb AS (
       AND c.acctid IS NOT NULL
 ),
 delq AS (
-    SELECT i.contactid, i.call_dt, i.acct_key, nxt.pay_dt
+    SELECT i.contactid, i.call_dt, i.acct_key, s.pay_dt AS pay0, nxt.pay_dt
     FROM inb i
     CROSS JOIN latest
     JOIN monthly s
@@ -76,9 +76,12 @@ flagged AS (
              WHEN t.pay_utts > 0 THEN 'a. payment/plan language'
              ELSE 'b. no payment/plan language'
            END AS language_group,
-           CASE WHEN d.pay_dt IS NOT NULL
-                 AND d.pay_dt >= d.call_dt
-                 AND d.pay_dt <= date_add('day', 30, d.call_dt)
+           CASE WHEN (d.pay0 IS NOT NULL
+                      AND d.pay0 >= d.call_dt
+                      AND d.pay0 <= date_add('day', 30, d.call_dt))
+                  OR (d.pay_dt IS NOT NULL
+                      AND d.pay_dt >= d.call_dt
+                      AND d.pay_dt <= date_add('day', 30, d.call_dt))
                 THEN 1 ELSE 0 END AS paid_30d
     FROM delq d
     LEFT JOIN tx t ON d.contactid = t.contactid

@@ -1,12 +1,11 @@
--- Tier 5 | The funnel by delinquency bucket (W3: call months 2024-07 .. 2025-06)
--- Where on the ladder does the leakage sit? The same cumulative gates as
--- f1_funnel_waterfall, split by the caller's bucket in the call month:
--- delinquent episodes -> transcribed -> payment/plan language -> no payment
--- within 30 days -> charged off within 8 months.
--- Early buckets carry the volume; late buckets carry the loss probability -
--- this table shows where episodes x loss actually concentrates.
--- Same pinned W3 window as f1 (episodes need 8 months of outcome runway
--- before the account copy's 2026-03-07 edge).
+-- Tier 10 | Payment latency: how fast do captured episodes actually pay? (W3)
+-- Among captured intent episodes (the f1 chain, payment within 30 days),
+-- the distribution of days from call to payment date. Same-day-to-3-day
+-- payments are on-call or immediate captures; the 15-30 tail is money that
+-- arrived but maybe not because of the call. Validates the 30-day window
+-- from the inside and separates 'paid on the call' from 'paid eventually' -
+-- the on-call capture rate is the number a live-assist play is priced on.
+-- Same pinned W3 window, dedup, and gates as f1.
 WITH snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
@@ -37,7 +36,7 @@ monthly AS (
     FROM snap GROUP BY 1, 2
 ),
 monthly2 AS (
-    SELECT extnl_acct_id, m, bucket,
+    SELECT extnl_acct_id, m, bucket, pay_dt,
            min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt
     FROM monthly
@@ -63,7 +62,16 @@ episodes AS (
 ),
 matched AS (
     SELECT e.acct_key, e.contactid, e.call_dt,
-           s.bucket, s.acct_co_dt, s.next_pay_dt
+           CASE
+             WHEN s.pay_dt IS NOT NULL
+                  AND s.pay_dt >= e.call_dt
+                  AND s.pay_dt <= date_add('day', 30, e.call_dt)
+               THEN s.pay_dt
+             WHEN s.next_pay_dt IS NOT NULL
+                  AND s.next_pay_dt >= e.call_dt
+                  AND s.next_pay_dt <= date_add('day', 30, e.call_dt)
+               THEN s.next_pay_dt
+           END AS capture_dt
     FROM episodes e
     JOIN monthly2 s
       ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
@@ -78,31 +86,26 @@ tx AS (
                         'pay|paid|payment|settle|payment plan|arrangement|work something out'))
                AS pay_utts
     FROM "contactcenter_bdp_db"."transcript" t
-    JOIN (SELECT DISTINCT contactid FROM matched) d
+    JOIN (SELECT DISTINCT contactid FROM matched WHERE capture_dt IS NOT NULL) d
       ON t.contactid = d.contactid
     GROUP BY 1
 ),
-ep AS (
-    SELECT m.bucket,
-           CASE
-             WHEN t.contactid IS NULL THEN 4
-             WHEN t.pay_utts = 0 THEN 5
-             WHEN m.next_pay_dt IS NOT NULL
-                  AND m.next_pay_dt >= m.call_dt
-                  AND m.next_pay_dt <= date_add('day', 30, m.call_dt) THEN 6
-             WHEN m.acct_co_dt IS NULL
-                  OR m.acct_co_dt > date_add('month', 8, m.call_dt) THEN 7
-             ELSE 8
-           END AS deepest
+lat AS (
+    SELECT date_diff('day', m.call_dt, m.capture_dt) AS days_to_payment
     FROM matched m
-    LEFT JOIN tx t ON m.contactid = t.contactid
+    JOIN tx t ON m.contactid = t.contactid
+    WHERE m.capture_dt IS NOT NULL
+      AND t.pay_utts > 0
 )
-SELECT bucket AS dpd_bucket,
-       count(*) AS delinquent_episodes,
-       count_if(deepest >= 5) AS with_transcript,
-       count_if(deepest >= 6) AS pay_language,
-       count_if(deepest >= 7) AS no_payment_30d,
-       count_if(deepest >= 8) AS chargeoff_8m
-FROM ep
+SELECT CASE
+         WHEN days_to_payment = 0 THEN 'a. same day'
+         WHEN days_to_payment <= 3 THEN 'b. 1-3 days'
+         WHEN days_to_payment <= 7 THEN 'c. 4-7 days'
+         WHEN days_to_payment <= 14 THEN 'd. 8-14 days'
+         ELSE 'e. 15-30 days'
+       END AS latency_band,
+       count(*) AS captured_episodes,
+       round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct_of_captured
+FROM lat
 GROUP BY 1
 ORDER BY 1

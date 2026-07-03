@@ -1,9 +1,11 @@
--- Tier 6 | Payment next month: delinquent callers vs non-callers, by bucket
+-- Tier 6 | Payment in-month or next: delinquent callers vs non-callers, by bucket
 -- The self-cure baseline. Of delinquent account-months, what share shows a
--- payment in the FOLLOWING month, split by whether the account placed an
--- inbound call that month? The non-caller column is the do-nothing baseline
--- every capture claim must beat; the caller minus non-caller gap is raw
--- association (callers self-select), not a causal lift.
+-- payment dated in that month or the following one, split by whether the
+-- account placed an inbound call that month? (Counting only the following
+-- month misses same-month captures - a call on the 3rd collecting on the 5th.)
+-- The non-caller column is the do-nothing baseline every capture claim must
+-- beat; the caller minus non-caller gap is raw association (callers
+-- self-select), not a causal lift.
 -- Observation months: 6 account months ending two months before the newest
 -- account month, so every observation has a complete following month.
 WITH latest AS (
@@ -40,15 +42,17 @@ monthly AS (
     FROM snap GROUP BY 1, 2
 ),
 seq AS (
-    SELECT extnl_acct_id, m, bucket,
+    SELECT extnl_acct_id, m, bucket, pay_dt,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt,
            lead(m) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_m
     FROM monthly
 ),
 obs AS (
     SELECT s.extnl_acct_id, s.m, s.bucket,
-           CASE WHEN s.next_pay_dt >= date_add('month', 1, cast(s.m AS date))
-                 AND s.next_pay_dt < date_add('month', 2, cast(s.m AS date))
+           CASE WHEN (s.pay_dt >= cast(s.m AS date)
+                      AND s.pay_dt < date_add('month', 1, cast(s.m AS date)))
+                  OR (s.next_pay_dt >= cast(s.m AS date)
+                      AND s.next_pay_dt < date_add('month', 2, cast(s.m AS date)))
                 THEN 1 ELSE 0 END AS paid_next_month
     FROM seq s
     CROSS JOIN latest
@@ -80,10 +84,10 @@ flagged AS (
 SELECT bucket AS dpd_bucket,
        count_if(called = 1) AS caller_account_months,
        round(100.0 * count_if(called = 1 AND paid_next_month = 1)
-             / greatest(count_if(called = 1), 1), 1) AS caller_pct_paid_next_month,
+             / greatest(count_if(called = 1), 1), 1) AS caller_pct_paid,
        count_if(called = 0) AS noncaller_account_months,
        round(100.0 * count_if(called = 0 AND paid_next_month = 1)
-             / greatest(count_if(called = 0), 1), 1) AS noncaller_pct_paid_next_month
+             / greatest(count_if(called = 0), 1), 1) AS noncaller_pct_paid
 FROM flagged
 GROUP BY 1
 ORDER BY 1

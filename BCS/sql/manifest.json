@@ -1,10 +1,10 @@
 {
-  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation / 5 funnel / 6 sizing inputs / 7 conversation / 8 learned language), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, story (core | context - context cards render collapsed), and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
+  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation / 5 funnel / 6 sizing inputs / 7 conversation / 8 learned language / 9 operations / 10 follow-through), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, story (core | context - context cards render collapsed), and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
   "queries": [
     {
       "id": "t1_acct_size",
       "tier": 1,
-      "file": "t1_acct_size.sql",
+      "file": "tier1/t1_acct_size.sql",
       "title": "Account table size and freshness",
       "question": "How big is the account master, and how fresh is its newest monthly snapshot?",
       "render": "kpis",
@@ -20,7 +20,7 @@
     {
       "id": "t1_call_size",
       "tier": 1,
-      "file": "t1_call_size.sql",
+      "file": "tier1/t1_call_size.sql",
       "title": "Call table size, period, and account-link fill",
       "question": "How many call legs, over what period, and how often is the account id populated?",
       "render": "kpis",
@@ -37,7 +37,7 @@
     {
       "id": "t1_transcript_size",
       "tier": 1,
-      "file": "t1_transcript_size.sql",
+      "file": "tier1/t1_transcript_size.sql",
       "title": "Transcript table size and history depth",
       "question": "How many utterances and distinct calls do transcripts cover, and how far back does the history go?",
       "render": "kpis",
@@ -53,7 +53,7 @@
     {
       "id": "t1_initiation_mix",
       "tier": 1,
-      "file": "t1_initiation_mix.sql",
+      "file": "tier1/t1_initiation_mix.sql",
       "title": "Calls by initiation method",
       "question": "What share of call legs is inbound vs outbound vs transfer?",
       "render": "bars",
@@ -68,7 +68,7 @@
     {
       "id": "t1_participants",
       "tier": 1,
-      "file": "t1_participants.sql",
+      "file": "tier1/t1_participants.sql",
       "title": "Who speaks in transcripts",
       "question": "Utterance split by participant; any value beyond AGENT / CUSTOMER shows up here.",
       "render": "bars",
@@ -85,7 +85,7 @@
     {
       "id": "t1_sentiment_mix",
       "tier": 1,
-      "file": "t1_sentiment_mix.sql",
+      "file": "tier1/t1_sentiment_mix.sql",
       "title": "Utterance sentiment by speaker",
       "question": "How does per-utterance sentiment split for customers vs agents?",
       "render": "table",
@@ -99,7 +99,7 @@
     {
       "id": "t2_monthly_volume",
       "tier": 2,
-      "file": "t2_monthly_volume.sql",
+      "file": "tier2/t2_monthly_volume.sql",
       "title": "Monthly call volume by initiation method (last 12 months)",
       "question": "Is call volume trending up or down, and what is the inbound share?",
       "render": "line",
@@ -116,7 +116,7 @@
     {
       "id": "t2_split_producttype",
       "tier": 2,
-      "file": "t2_split_producttype.sql",
+      "file": "tier2/t2_split_producttype.sql",
       "title": "Inbound calls by product type (last 6 months)",
       "question": "Which product lines drive inbound volume?",
       "render": "bars",
@@ -131,7 +131,7 @@
     {
       "id": "t2_split_vendor",
       "tier": 2,
-      "file": "t2_split_vendor.sql",
+      "file": "tier2/t2_split_vendor.sql",
       "title": "Inbound calls by vendor (last 6 months)",
       "question": "How is inbound volume spread across servicing vendors?",
       "render": "bars",
@@ -146,7 +146,7 @@
     {
       "id": "t2_split_site",
       "tier": 2,
-      "file": "t2_split_site.sql",
+      "file": "tier2/t2_split_site.sql",
       "title": "Inbound calls by site (last 6 months)",
       "question": "Onshore vs offshore: where are inbound calls handled?",
       "render": "bars",
@@ -161,7 +161,7 @@
     {
       "id": "t2_split_queue",
       "tier": 2,
-      "file": "t2_split_queue.sql",
+      "file": "tier2/t2_split_queue.sql",
       "title": "Top queues for inbound calls (last 6 months)",
       "question": "Which queues take the volume (collections vs care vs fraud)?",
       "render": "bars",
@@ -176,7 +176,7 @@
     {
       "id": "t2_split_auth",
       "tier": 2,
-      "file": "t2_split_auth.sql",
+      "file": "tier2/t2_split_auth.sql",
       "title": "Authentication outcome on inbound calls (last 6 months)",
       "question": "How often do callers fail authentication (a friction signal)?",
       "render": "bars",
@@ -191,7 +191,7 @@
     {
       "id": "t2_split_transfer",
       "tier": 2,
-      "file": "t2_split_transfer.sql",
+      "file": "tier2/t2_split_transfer.sql",
       "title": "Transfer type on inbound calls (last 6 months)",
       "question": "How much inbound volume ends in a transfer, and of which kind?",
       "render": "bars",
@@ -206,7 +206,7 @@
     {
       "id": "t2_handle_time",
       "tier": 2,
-      "file": "t2_handle_time.sql",
+      "file": "tier2/t2_handle_time.sql",
       "title": "Handle-time profile, inbound handled calls (last 6 months)",
       "question": "How long does an inbound call take, end to end?",
       "render": "kpis",
@@ -223,7 +223,7 @@
     {
       "id": "t2_abandon_transfer_monthly",
       "tier": 2,
-      "file": "t2_abandon_transfer_monthly.sql",
+      "file": "tier2/t2_abandon_transfer_monthly.sql",
       "title": "Abandon and transfer rates on inbound calls (last 6 months)",
       "question": "Are callers being lost to abandons or transfer loops, and is it getting worse?",
       "render": "line",
@@ -243,7 +243,7 @@
     {
       "id": "t2_sentiment_monthly",
       "tier": 2,
-      "file": "t2_sentiment_monthly.sql",
+      "file": "tier2/t2_sentiment_monthly.sql",
       "title": "Average call-level sentiment (last 6 months)",
       "question": "How do customer and agent sentiment trend month to month?",
       "render": "line",
@@ -263,7 +263,7 @@
     {
       "id": "t2_utterances_per_call",
       "tier": 2,
-      "file": "t2_utterances_per_call.sql",
+      "file": "tier2/t2_utterances_per_call.sql",
       "title": "Utterances per transcribed call",
       "question": "How long are the conversations, in spoken turns?",
       "render": "bars",
@@ -278,7 +278,7 @@
     {
       "id": "t2_call_minutes",
       "tier": 2,
-      "file": "t2_call_minutes.sql",
+      "file": "tier2/t2_call_minutes.sql",
       "title": "Call duration from transcript timestamps",
       "question": "How many minutes of conversation does a transcribed call hold?",
       "render": "kpis",
@@ -294,8 +294,8 @@
     {
       "id": "t2_dpd_buckets",
       "tier": 2,
-      "file": "t2_dpd_buckets.sql",
-      "fallback_file": "t2_dpd_buckets_fallback.sql",
+      "file": "tier2/t2_dpd_buckets.sql",
+      "fallback_file": "tier2/t2_dpd_buckets_fallback.sql",
       "title": "Accounts by delinquency bucket (latest snapshot)",
       "question": "How many accounts sit in each 30-day past-due bucket, holding how much balance?",
       "render": "bars",
@@ -311,7 +311,7 @@
     {
       "id": "t2_chargeoff_trend",
       "tier": 2,
-      "file": "t2_chargeoff_trend.sql",
+      "file": "tier2/t2_chargeoff_trend.sql",
       "title": "Charge-offs by month (last 24 months of table history)",
       "question": "How many accounts charge off per month, and for how much?",
       "render": "line",
@@ -329,7 +329,7 @@
     {
       "id": "t3_match_rate",
       "tier": 3,
-      "file": "t3_match_rate.sql",
+      "file": "tier3/t3_match_rate.sql",
       "title": "Call-to-account match rate (inbound, last 6 months)",
       "question": "Of recent inbound calls, how many carry an account id, and how many of those resolve to the account master? This gates every cross-table analysis.",
       "render": "kpis",
@@ -345,7 +345,7 @@
     {
       "id": "t3_transcript_coverage",
       "tier": 3,
-      "file": "t3_transcript_coverage.sql",
+      "file": "tier3/t3_transcript_coverage.sql",
       "title": "Transcript coverage of inbound calls, by month (last 6 months)",
       "question": "What share of inbound calls has at least one transcript row? Coverage is known to be partial - this measures it.",
       "render": "line",
@@ -364,7 +364,7 @@
     {
       "id": "t3_repeat_callers",
       "tier": 3,
-      "file": "t3_repeat_callers.sql",
+      "file": "tier3/t3_repeat_callers.sql",
       "title": "Repeat calling by account (inbound, last 6 months)",
       "question": "Do accounts call once or repeatedly? Repeat calls signal friction or unresolved need.",
       "render": "bars",
@@ -380,8 +380,8 @@
     {
       "id": "t3_caller_dpd",
       "tier": 3,
-      "file": "t3_caller_dpd.sql",
-      "fallback_file": "t3_caller_dpd_fallback.sql",
+      "file": "tier3/t3_caller_dpd.sql",
+      "fallback_file": "tier3/t3_caller_dpd_fallback.sql",
       "title": "Inbound calls by caller delinquency bucket (last 6 months)",
       "question": "How much inbound volume comes from delinquent accounts, and does caller mood worsen with bucket depth? Bucket read at the newest account snapshot, which may trail the calls.",
       "render": "bars",
@@ -397,7 +397,7 @@
     {
       "id": "t3_payment_language",
       "tier": 3,
-      "file": "t3_payment_language.sql",
+      "file": "tier3/t3_payment_language.sql",
       "title": "Payment language in customer utterances (inbound, last 1 month)",
       "question": "In what share of transcribed inbound calls does the customer talk about paying, a plan, hardship, or escalation? A first, crude read of caller intent.",
       "render": "kpis",
@@ -414,7 +414,7 @@
     {
       "id": "t3_conversation_arc",
       "tier": 3,
-      "file": "t3_conversation_arc.sql",
+      "file": "tier3/t3_conversation_arc.sql",
       "title": "Customer sentiment across the call (inbound, last 1 month)",
       "question": "Split each call into thirds by time: does customer sentiment recover by the end of the call?",
       "render": "table",
@@ -428,7 +428,7 @@
     {
       "id": "t3_first_last_speaker",
       "tier": 3,
-      "file": "t3_first_last_speaker.sql",
+      "file": "tier3/t3_first_last_speaker.sql",
       "title": "Who opens and who closes the call (inbound, last 1 month)",
       "question": "Conversation shape: who speaks first and last, and how many turns does each side take?",
       "render": "table",
@@ -444,7 +444,7 @@
     {
       "id": "v1_dq1_call_concentration",
       "tier": 4,
-      "file": "v1_dq1_call_concentration.sql",
+      "file": "tier4/v1_dq1_call_concentration.sql",
       "title": "Where on the DQ ladder do inbound calls land (same-month join, last 6 months)",
       "question": "Tests the assumption that most inbound calls concentrate in DQ1. Caller bucket read in the month of the call, not at the latest snapshot.",
       "render": "bars",
@@ -461,7 +461,7 @@
     {
       "id": "v2_vintage_roll",
       "tier": 4,
-      "file": "v2_vintage_roll.sql",
+      "file": "tier4/v2_vintage_roll.sql",
       "title": "Roll / cure curve for a DQ1-entrant vintage (11 months of follow-up)",
       "question": "The empirical stage-migration rates: how a new-delinquency cohort splits into cured, still delinquent, 90+, and charged-off month by month. Replaces assumed multipliers with measured ones.",
       "render": "line",
@@ -485,7 +485,7 @@
     {
       "id": "v3_caller_vs_noncaller",
       "tier": 4,
-      "file": "v3_caller_vs_noncaller.sql",
+      "file": "tier4/v3_caller_vs_noncaller.sql",
       "title": "Outcomes: callers vs non-callers in the same DQ1 vintage",
       "question": "The forward frame. Same cohort, split by inbound call in the first 3 delinquent months: who charges off, who cures, and how much balance sits in each group. Association, not causation.",
       "render": "table",
@@ -502,7 +502,7 @@
     {
       "id": "v4_balance_at_risk",
       "tier": 4,
-      "file": "v4_balance_at_risk.sql",
+      "file": "tier4/v4_balance_at_risk.sql",
       "title": "Entry balance by eventual outcome (DQ1 vintage)",
       "question": "Tests 'balance at DQ1 = balance at risk'. Shows how entry dollars actually split between cure, still-delinquent, and charge-off.",
       "render": "bars",
@@ -519,7 +519,7 @@
     {
       "id": "v5_payment_after_call",
       "tier": 4,
-      "file": "v5_payment_after_call.sql",
+      "file": "tier4/v5_payment_after_call.sql",
       "title": "Payment within 30 days of an inbound call, by bucket (last 6 months)",
       "question": "The capture / leakage proxy at scale: what share of delinquent-account inbound calls shows no payment within 30 days? Payment read from the next month-end snapshot (proxy).",
       "render": "bars",
@@ -536,7 +536,7 @@
     {
       "id": "v6_stage_proxy",
       "tier": 4,
-      "file": "v6_stage_proxy.sql",
+      "file": "tier4/v6_stage_proxy.sql",
       "title": "Provision-stage proxy from the DQ ladder (latest snapshot)",
       "question": "IFRS9-style staging shape from the bucket ladder: accounts and balances in stage-1/2/3 proxies. Pair with the vintage roll curve for an evidence-based expected-loss ladder.",
       "render": "bars",
@@ -553,7 +553,7 @@
     {
       "id": "v7_ib_ob_mix",
       "tier": 4,
-      "file": "v7_ib_ob_mix.sql",
+      "file": "tier4/v7_ib_ob_mix.sql",
       "title": "Inbound vs outbound contact mix by bucket (last 6 months)",
       "question": "Sizes how much of the contact volume inbound-only analysis sees, per delinquency bucket, keeping outbound separate.",
       "render": "table",
@@ -570,7 +570,7 @@
     {
       "id": "v8_reage_proxy",
       "tier": 4,
-      "file": "v8_reage_proxy.sql",
+      "file": "tier4/v8_reage_proxy.sql",
       "title": "Deep-bucket resets to current (re-age / cure signal, last 6 months)",
       "question": "There is no explicit re-age flag here. How often do accounts jump from DQ2+ straight back to current, per bucket? Sizes the re-age question before chasing the flag.",
       "render": "table",
@@ -585,7 +585,7 @@
     {
       "id": "t1_acctid_fill_trend",
       "tier": 1,
-      "file": "t1_acctid_fill_trend.sql",
+      "file": "tier1/t1_acctid_fill_trend.sql",
       "title": "Account-id fill on call legs, by month (last 24 months)",
       "question": "Is the acctid fill improving over time? Lifetime fill hides the trend that decides how far back cohort joins can reach.",
       "render": "line",
@@ -603,7 +603,7 @@
     {
       "id": "t2_transfer_episodes",
       "tier": 2,
-      "file": "t2_transfer_episodes.sql",
+      "file": "tier2/t2_transfer_episodes.sql",
       "title": "Inbound calls that spawn transfer legs, by month (last 6 months)",
       "question": "The real transfer rate: what share of inbound calls is followed by a TRANSFER / QUEUE_TRANSFER leg chained to it?",
       "render": "line",
@@ -623,7 +623,7 @@
     {
       "id": "t3_coverage_by_method",
       "tier": 3,
-      "file": "t3_coverage_by_method.sql",
+      "file": "tier3/t3_coverage_by_method.sql",
       "title": "Transcript coverage by initiation method (last 6 months)",
       "question": "Transcribed calls outnumber inbound calls, so transcripts cover more than inbound. Which methods, and how completely?",
       "render": "table",
@@ -638,7 +638,7 @@
     {
       "id": "t3_delinquent_queues",
       "tier": 3,
-      "file": "t3_delinquent_queues.sql",
+      "file": "tier3/t3_delinquent_queues.sql",
       "title": "Top queues for delinquent callers (same-month join, last 3 account months)",
       "question": "Do delinquent accounts ring collections queues or care queues? This decides the queue filter for any collections call analysis.",
       "render": "bars",
@@ -653,7 +653,7 @@
     {
       "id": "v9_payment_language_by_bucket",
       "tier": 4,
-      "file": "v9_payment_language_by_bucket.sql",
+      "file": "tier4/v9_payment_language_by_bucket.sql",
       "title": "Payment language: current vs delinquent callers (newest account month)",
       "question": "The unconditioned payment-talk rate is an upper bound. How does payment / plan / hardship / escalation language differ once you split callers by delinquency?",
       "render": "table",
@@ -670,22 +670,24 @@
     {
       "id": "f1_funnel_waterfall",
       "tier": 5,
-      "file": "f1_funnel_waterfall.sql",
+      "file": "tier5/f1_funnel_waterfall.sql",
       "title": "The leakage funnel, end to end (Jul 2024 - Jun 2025)",
-      "question": "Inbound episodes from delinquent accounts that showed payment intent, left without a capture, and charged off within 8 months - episodes, accounts, and dollars at every stage.",
+      "question": "Inbound episodes from delinquent accounts that showed payment intent, left without a CLEAN capture (autopay/NSF excluded), and charged off within 8 months - episodes (loose and strict intent), accounts, and dollars at every stage.",
       "render": "table",
       "story": "core",
       "columns": [
         "stage",
         "episodes",
+        "episodes_strict",
         "accounts",
         "balance_dollars"
-      ]
+      ],
+      "fallback_file": "tier5/f1_funnel_waterfall_fallback.sql"
     },
     {
       "id": "f2_funnel_by_month",
       "tier": 5,
-      "file": "f2_funnel_by_month.sql",
+      "file": "tier5/f2_funnel_by_month.sql",
       "title": "The funnel by call-month vintage",
       "question": "Are the stage-to-stage drops stable month over month, or does one vintage drive the story?",
       "render": "table",
@@ -704,7 +706,7 @@
     {
       "id": "f6_funnel_by_bucket",
       "tier": 5,
-      "file": "f6_funnel_by_bucket.sql",
+      "file": "tier5/f6_funnel_by_bucket.sql",
       "title": "The funnel by delinquency bucket",
       "question": "Where on the ladder do leaked episodes and eventual losses concentrate?",
       "render": "table",
@@ -721,7 +723,7 @@
     {
       "id": "f7_leaked_dollars_by_month",
       "tier": 5,
-      "file": "f7_leaked_dollars_by_month.sql",
+      "file": "tier5/f7_leaked_dollars_by_month.sql",
       "title": "Leaked episodes and their dollars, by month",
       "question": "The dollar trend behind the funnel end: leaked balances and the charge-off dollars that followed.",
       "render": "table",
@@ -738,7 +740,7 @@
     {
       "id": "f3_funnel_dollars",
       "tier": 5,
-      "file": "f3_funnel_dollars.sql",
+      "file": "tier5/f3_funnel_dollars.sql",
       "title": "Charge-off dollars: funnel-end callers vs non-callers",
       "question": "Of realized charge-off dollars, how much sat on accounts the inbound channel touched and did not capture?",
       "render": "table",
@@ -748,13 +750,14 @@
         "accounts",
         "chargeoff_dollars",
         "avg_chargeoff",
-        "pct_of_dollars"
+        "pct_of_dollars",
+        "pct_dollars_bk_dcsd_fraud"
       ]
     },
     {
       "id": "f5_calls_before_chargeoff",
       "tier": 5,
-      "file": "f5_calls_before_chargeoff.sql",
+      "file": "tier5/f5_calls_before_chargeoff.sql",
       "title": "Inbound episodes between DQ1 entry and charge-off",
       "question": "How many chances did the inbound channel get on accounts that went on to charge off?",
       "render": "bars",
@@ -771,7 +774,7 @@
     {
       "id": "f4_match_by_auth",
       "tier": 5,
-      "file": "f4_match_by_auth.sql",
+      "file": "tier5/f4_match_by_auth.sql",
       "title": "Bias gate: account match by authentication outcome",
       "question": "Do unmatched calls concentrate among callers who failed authentication - the very population a capture play targets?",
       "render": "table",
@@ -788,7 +791,7 @@
     {
       "id": "f4_coverage_by_bucket",
       "tier": 5,
-      "file": "f4_coverage_by_bucket.sql",
+      "file": "tier5/f4_coverage_by_bucket.sql",
       "title": "Bias gate: transcript coverage by bucket",
       "question": "Are deep-bucket calls transcribed as often as early-bucket calls, or does the funnel undercount where the dollars are?",
       "render": "table",
@@ -803,7 +806,7 @@
     {
       "id": "f0_period_calibration",
       "tier": 5,
-      "file": "f0_period_calibration.sql",
+      "file": "tier5/f0_period_calibration.sql",
       "title": "Period calibration: fill and coverage by month, full history",
       "question": "Which months are safe to analyse? Confirms the funnel window: reliable transcript coverage, stable account-id fill, 8 months of outcome runway.",
       "render": "table",
@@ -818,7 +821,7 @@
     {
       "id": "f0b_method_history",
       "tier": 5,
-      "file": "f0b_method_history.sql",
+      "file": "tier5/f0b_method_history.sql",
       "title": "Calibration companion: method mix by month, full history",
       "question": "When did the initiation-method mix shift? No window should be read across a mix break.",
       "render": "line",
@@ -835,7 +838,7 @@
     {
       "id": "s1_balance_by_bucket",
       "tier": 6,
-      "file": "s1_balance_by_bucket.sql",
+      "file": "tier6/s1_balance_by_bucket.sql",
       "title": "Balance profile by bucket (live accounts)",
       "question": "The per-account dollar input: average and median balance per bucket, charged-off stock excluded.",
       "render": "table",
@@ -851,7 +854,7 @@
     {
       "id": "s2_roll_matrix",
       "tier": 6,
-      "file": "s2_roll_matrix.sql",
+      "file": "tier6/s2_roll_matrix.sql",
       "title": "Leading-edge roll matrix (12 months)",
       "question": "Account-level month-over-month migration: cure, improve, hold, roll deeper, charge off - the measured multipliers.",
       "render": "table",
@@ -869,7 +872,7 @@
     {
       "id": "s3_payment_size_by_bucket",
       "tier": 6,
-      "file": "s3_payment_size_by_bucket.sql",
+      "file": "tier6/s3_payment_size_by_bucket.sql",
       "title": "Payment size by bucket",
       "question": "When a delinquent account pays, how much? The per-capture dollar value.",
       "render": "table",
@@ -886,23 +889,23 @@
     {
       "id": "s4_caller_payment_lift",
       "tier": 6,
-      "file": "s4_caller_payment_lift.sql",
-      "title": "Payment next month: callers vs non-callers",
-      "question": "The self-cure baseline every capture claim must beat, and the raw caller association on top of it.",
+      "file": "tier6/s4_caller_payment_lift.sql",
+      "title": "Payment in-month or next: callers vs non-callers",
+      "question": "The self-cure baseline every capture claim must beat: payment dated in the observation month or the next, callers vs non-callers, by bucket.",
       "render": "table",
       "story": "core",
       "columns": [
         "dpd_bucket",
         "caller_account_months",
-        "caller_pct_paid_next_month",
+        "caller_pct_paid",
         "noncaller_account_months",
-        "noncaller_pct_paid_next_month"
+        "noncaller_pct_paid"
       ]
     },
     {
       "id": "h1_language_vs_payment",
       "tier": 7,
-      "file": "h1_language_vs_payment.sql",
+      "file": "tier7/h1_language_vs_payment.sql",
       "title": "Does payment language predict payment?",
       "question": "The lexicon validation: 30-day payment rates for delinquent calls with vs without payment/plan language.",
       "render": "table",
@@ -917,7 +920,7 @@
     {
       "id": "h2_first_payment_mention",
       "tier": 7,
-      "file": "h2_first_payment_mention.sql",
+      "file": "tier7/h2_first_payment_mention.sql",
       "title": "Who raises payment first?",
       "question": "Arriving intent vs agent pivot: does the customer or the agent bring up payment on delinquent calls?",
       "render": "bars",
@@ -933,7 +936,7 @@
     {
       "id": "h3_language_by_ladder",
       "tier": 7,
-      "file": "h3_language_by_ladder.sql",
+      "file": "tier7/h3_language_by_ladder.sql",
       "title": "Customer language across the full ladder",
       "question": "Where does intent talk turn into hardship talk as delinquency deepens?",
       "render": "table",
@@ -950,7 +953,7 @@
     {
       "id": "h4_call_effort_by_bucket",
       "tier": 7,
-      "file": "h4_call_effort_by_bucket.sql",
+      "file": "tier7/h4_call_effort_by_bucket.sql",
       "title": "Call effort by bucket",
       "question": "Handle time, turns, and minutes per bucket - the cost side of the capture case.",
       "render": "table",
@@ -966,7 +969,7 @@
     {
       "id": "n1_discriminative_bigrams",
       "tier": 8,
-      "file": "n1_discriminative_bigrams.sql",
+      "file": "tier8/n1_discriminative_bigrams.sql",
       "title": "Learned lexicon: phrases that separate paid from leaked calls",
       "question": "Data-derived phrase candidates: which customer bigrams mark calls that leaked, and which mark calls that paid?",
       "render": "table",
@@ -984,11 +987,11 @@
     {
       "id": "n2_sentiment_vs_payment",
       "tier": 8,
-      "file": "n2_sentiment_vs_payment.sql",
+      "file": "tier8/n2_sentiment_vs_payment.sql",
       "title": "Does the platform's NLP predict payment?",
       "question": "Call-level customer sentiment (model-produced) vs the 30-day payment outcome.",
       "render": "table",
-      "story": "context",
+      "story": "core",
       "columns": [
         "sentiment_band",
         "delinquent_calls",
@@ -999,7 +1002,7 @@
     {
       "id": "n3_intent_score",
       "tier": 8,
-      "file": "n3_intent_score.sql",
+      "file": "tier8/n3_intent_score.sql",
       "title": "Can rules rank calls? Intent score vs outcome",
       "question": "An additive score from language, initiative, and tone - if payment rate climbs with it, a live read can rank calls.",
       "render": "table",
@@ -1013,7 +1016,7 @@
     {
       "id": "n4_agent_offer_vs_outcome",
       "tier": 8,
-      "file": "n4_agent_offer_vs_outcome.sql",
+      "file": "tier8/n4_agent_offer_vs_outcome.sql",
       "title": "The recoverable-miss signal: agent offer vs outcome",
       "question": "On calls with customer payment intent, does an agent plan-offer move the payment rate? First read of the recoverable slice.",
       "render": "table",
@@ -1023,6 +1026,386 @@
         "calls",
         "pct_payment_within_30d",
         "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "t3_unmatched_queues",
+      "tier": 3,
+      "file": "tier3/t3_unmatched_queues.sql",
+      "title": "The invisible pool: unmatched calls, and whether they talk payment",
+      "question": "Which queues do acctid-less calls ring, and how often does the customer talk payment there? Transcripts join on contactid, so the invisible pool is readable.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "queue",
+        "unmatched_calls",
+        "pct_with_transcript",
+        "pct_payment_language"
+      ]
+    },
+    {
+      "id": "t3_call_gap_days",
+      "tier": 3,
+      "file": "tier3/t3_call_gap_days.sql",
+      "title": "Days between consecutive inbound calls per account",
+      "question": "Friction cadence: same-day and 1-3-day repeats vs cycle-driven monthly contact.",
+      "render": "bars",
+      "story": "context",
+      "label_col": "gap_band",
+      "value_col": "call_pairs",
+      "columns": [
+        "gap_band",
+        "call_pairs",
+        "pct_of_pairs"
+      ]
+    },
+    {
+      "id": "v10_cure_durability",
+      "tier": 4,
+      "file": "tier4/v10_cure_durability.sql",
+      "title": "Cure durability: re-delinquent within 3 months",
+      "question": "How many cures hold? Re-delinquency after a cure discounts the cure's value and flags re-age-like resets.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "from_bucket",
+        "cures",
+        "redelinquent_3m",
+        "pct_redelinquent_3m"
+      ]
+    },
+    {
+      "id": "v11_multi_vintage_roll",
+      "tier": 4,
+      "file": "tier4/v11_multi_vintage_roll.sql",
+      "title": "Roll / cure curve across three vintages",
+      "question": "Do the migration curves agree across seasons, or is the quoted roll rate one draw?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "vintage",
+        "month_on_book",
+        "accounts_visible",
+        "pct_current",
+        "pct_delinquent",
+        "pct_charged_off"
+      ]
+    },
+    {
+      "id": "f8_payment_window_sensitivity",
+      "tier": 5,
+      "file": "tier5/f8_payment_window_sensitivity.sql",
+      "title": "Sensitivity: the no-payment gate at 7 / 14 / 30 / 60 days",
+      "question": "Does the leakage pool survive a longer payment window, or are slow payers being counted as leaked?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "pay_window_days",
+        "intent_episodes",
+        "episodes_no_payment",
+        "pct_no_payment"
+      ]
+    },
+    {
+      "id": "f9_episode_chaining",
+      "tier": 5,
+      "file": "tier5/f9_episode_chaining.sql",
+      "title": "Episode chaining: gap to the previous episode",
+      "question": "How do account-day episodes cluster? Decides whether multi-day chains should collapse into one episode, and at what window.",
+      "render": "bars",
+      "story": "context",
+      "label_col": "gap_band",
+      "value_col": "episodes",
+      "columns": [
+        "gap_band",
+        "episodes",
+        "pct_of_episodes"
+      ]
+    },
+    {
+      "id": "s5_balance_roll_matrix",
+      "tier": 6,
+      "file": "tier6/s5_balance_roll_matrix.sql",
+      "title": "Dollar-weighted roll matrix",
+      "question": "Where does each bucket's BALANCE go next month? Big accounts do not roll like small ones.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "from_bucket",
+        "total_balance",
+        "pct_bal_to_current",
+        "pct_bal_improved",
+        "pct_bal_same",
+        "pct_bal_deeper",
+        "pct_bal_charged_off"
+      ]
+    },
+    {
+      "id": "h5_triage_language",
+      "tier": 7,
+      "file": "tier7/h5_triage_language.sql",
+      "title": "Triage: dispute/fraud vs payment vs servicing-only",
+      "question": "How many delinquent calls are not collections conversations at all, and what does each group pay?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "triage_group",
+        "delinquent_calls",
+        "pct_of_calls",
+        "pct_payment_within_30d"
+      ]
+    },
+    {
+      "id": "h6_promise_language",
+      "tier": 7,
+      "file": "tier7/h6_promise_language.sql",
+      "title": "Promise language and whether payment followed",
+      "question": "The audible promise-to-pay: future-dated promise phrases vs payment talk vs none, each with its 30-day payment rate - the kept-promise proxy.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "promise_group",
+        "delinquent_calls",
+        "pct_of_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "n5_early_intent",
+      "tier": 8,
+      "file": "tier8/n5_early_intent.sql",
+      "title": "Early intent: is the first third of the call enough?",
+      "question": "If intent language in the first third already ranks calls, a live read can act mid-call; if the signal forms late, the play is follow-up.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "early_group",
+        "delinquent_calls",
+        "pct_of_calls",
+        "pct_payment_within_30d"
+      ]
+    },
+    {
+      "id": "o1_capture_by_queue",
+      "tier": 9,
+      "file": "tier9/o1_capture_by_queue.sql",
+      "title": "Capture by queue",
+      "question": "Which queues carry delinquent volume with the worst payment-after-call rates - the routing/coaching surface.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "queue",
+        "delinquent_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "o2_capture_by_vendor_site",
+      "tier": 9,
+      "file": "tier9/o2_capture_by_vendor_site.sql",
+      "title": "Capture by vendor and site",
+      "question": "Does handling location move the payment rate? Spread = coaching headroom; no spread = process-shaped leakage.",
+      "render": "table",
+      "story": "context",
+      "columns": [
+        "vendor",
+        "site",
+        "delinquent_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "o3_delinquent_transfer_paths",
+      "tier": 9,
+      "file": "tier9/o3_delinquent_transfer_paths.sql",
+      "title": "Transfers on the money path",
+      "question": "Are delinquent calls transferred more, and does a transferred delinquent call pay less afterwards?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "transfer_group",
+        "inbound_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "o4_delinquent_abandons",
+      "tier": 9,
+      "file": "tier9/o4_delinquent_abandons.sql",
+      "title": "Abandons on the money path",
+      "question": "Delinquent callers lost before an agent, and how many never call back within a week - the purest friction leakage.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "inbound_calls",
+        "abandoned_calls",
+        "pct_abandoned",
+        "pct_recontact_7d"
+      ]
+    },
+    {
+      "id": "x1_leaked_vs_captured_roll",
+      "tier": 10,
+      "file": "tier10/x1_leaked_vs_captured_roll.sql",
+      "title": "Leaked vs captured: the account three months later",
+      "question": "Do captured episodes sit visibly better at month three? If yes, capture is balance-shaped money, not one payment.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "episode_group",
+        "intent_episodes",
+        "pct_current_3m",
+        "pct_dq1_3_3m",
+        "pct_dq4_plus_3m",
+        "pct_chargedoff_3m",
+        "pct_not_visible_3m"
+      ]
+    },
+    {
+      "id": "x2_repeat_leak_chains",
+      "tier": 10,
+      "file": "tier10/x2_repeat_leak_chains.sql",
+      "title": "Repeat leaks and where they end",
+      "question": "Accounts by leaked-episode count within 90 days of the first leak, and the charge-off rate per band - the compounding-failure read.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "leak_band",
+        "accounts",
+        "pct_of_accounts",
+        "pct_chargedoff_8m"
+      ]
+    },
+    {
+      "id": "x3_time_to_chargeoff_after_leak",
+      "tier": 10,
+      "file": "tier10/x3_time_to_chargeoff_after_leak.sql",
+      "title": "Time from first leak to charge-off",
+      "question": "Does the 8-month funnel horizon capture the loss tail, or does a fat 9-12-month band mean it undercounts?",
+      "render": "bars",
+      "story": "core",
+      "label_col": "months_band",
+      "value_col": "accounts",
+      "columns": [
+        "months_band",
+        "accounts",
+        "pct_of_accounts"
+      ]
+    },
+    {
+      "id": "f4_scope_split",
+      "tier": 5,
+      "file": "tier5/f4_scope_split.sql",
+      "title": "Scope gate: what the product-scope choice moves",
+      "question": "Delinquent episodes by producttype - does the blank share behave like consumer, and what does the business-card exclusion remove?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "producttype",
+        "delinquent_episodes",
+        "pct_of_episodes",
+        "pct_payment_language",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "f4_bucket_drift",
+      "tier": 5,
+      "file": "tier5/f4_bucket_drift.sql",
+      "title": "Bucket-drift gate: month-max vs as-of-call-date bucket",
+      "question": "How often does the month-grain bucket tag a call with a delinquency it only reached AFTER the call? The kit's error band, measured.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "episodes",
+        "pct_asof_same",
+        "pct_asof_current",
+        "pct_asof_lower",
+        "pct_asof_higher"
+      ]
+    },
+    {
+      "id": "s6_payment_contamination",
+      "tier": 6,
+      "file": "tier6/s6_payment_contamination.sql",
+      "title": "Capture-gate contamination: autopay and NSF",
+      "question": "Of delinquent account-months with a payment, how much is autopay firing or a bounced payment? The correction band for every capture number.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "dpd_bucket",
+        "delinquent_account_months",
+        "with_payment_in_month",
+        "pct_payment_autopay_dated",
+        "pct_payment_nsf_marked"
+      ]
+    },
+    {
+      "id": "o5_capture_by_auth",
+      "tier": 9,
+      "file": "tier9/o5_capture_by_auth.sql",
+      "title": "Capture by authentication outcome",
+      "question": "Failed-auth delinquent callers who still wanted to pay are process leakage - the verification-block cause, measured.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "authenticationstatus",
+        "delinquent_calls",
+        "pct_payment_within_30d",
+        "pct_no_payment_30d"
+      ]
+    },
+    {
+      "id": "o6_coll_volume_monthly",
+      "tier": 9,
+      "file": "tier9/o6_coll_volume_monthly.sql",
+      "title": "Control total: collections-queue inbound by month",
+      "question": "The reconcilable number for the ops-reported call volumes - a large gap means calls this table does not carry, and the funnel denominator is a lower bound.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "month",
+        "coll_queue_calls",
+        "with_acctid",
+        "pct_with_acctid"
+      ]
+    },
+    {
+      "id": "x4_within_account_contrast",
+      "tier": 10,
+      "file": "tier10/x4_within_account_contrast.sql",
+      "title": "Within-account contrast: captured vs leaked, same accounts",
+      "question": "Accounts with both a captured and a leaked intent episode: the month after each, compared within the account - the self-controlled causality read.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "episode_group",
+        "intent_episodes",
+        "accounts",
+        "pct_current_next_month",
+        "pct_deeper_next_month"
+      ]
+    },
+    {
+      "id": "x5_payment_latency",
+      "tier": 10,
+      "file": "tier10/x5_payment_latency.sql",
+      "title": "Payment latency: how fast captured episodes pay",
+      "question": "Days from call to payment among captured intent episodes - separates paid-on-the-call from paid-eventually and validates the 30-day window from inside.",
+      "render": "bars",
+      "story": "core",
+      "label_col": "latency_band",
+      "value_col": "captured_episodes",
+      "columns": [
+        "latency_band",
+        "captured_episodes",
+        "pct_of_captured"
       ]
     }
   ]
