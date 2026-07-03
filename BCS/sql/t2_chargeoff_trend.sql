@@ -10,11 +10,12 @@ WITH co AS (
       AND chrgoff_dt IS NOT NULL
     GROUP BY 1
 ),
-mxco AS (SELECT max(co_dt) AS d FROM co)
+mxco AS (SELECT date_trunc('month', max(co_dt)) AS m1 FROM co)
 SELECT cast(date_trunc('month', co_dt) AS date) AS month,
        count(*) AS accounts_charged_off,
        round(sum(amt), 0) AS chargeoff_amount
 FROM co, mxco
-WHERE co_dt > date_add('month', -24, mxco.d)
+WHERE co_dt >= date_add('month', -24, mxco.m1)
+  AND co_dt < mxco.m1
 GROUP BY 1
 ORDER BY 1

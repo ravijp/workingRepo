@@ -546,6 +546,86 @@
         "reset_to_current",
         "pct_reset_to_current"
       ]
+    },
+    {
+      "id": "t1_acctid_fill_trend",
+      "tier": 1,
+      "file": "t1_acctid_fill_trend.sql",
+      "title": "Account-id fill on call legs, by month (last 24 months)",
+      "question": "Is the acctid fill improving over time? Lifetime fill hides the trend that decides how far back cohort joins can reach.",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": [
+        "pct_with_acctid"
+      ],
+      "columns": [
+        "month",
+        "call_rows",
+        "pct_with_acctid"
+      ]
+    },
+    {
+      "id": "t2_transfer_episodes",
+      "tier": 2,
+      "file": "t2_transfer_episodes.sql",
+      "title": "Inbound calls that spawn transfer legs, by month (last 6 months)",
+      "question": "The real transfer rate: what share of inbound calls is followed by a TRANSFER / QUEUE_TRANSFER leg chained to it?",
+      "render": "line",
+      "x_col": "month",
+      "y_cols": [
+        "pct_with_transfer_leg"
+      ],
+      "columns": [
+        "month",
+        "inbound_calls",
+        "with_transfer_leg",
+        "pct_with_transfer_leg",
+        "transfer_legs"
+      ]
+    },
+    {
+      "id": "t3_coverage_by_method",
+      "tier": 3,
+      "file": "t3_coverage_by_method.sql",
+      "title": "Transcript coverage by initiation method (last 6 months)",
+      "question": "Transcribed calls outnumber inbound calls, so transcripts cover more than inbound. Which methods, and how completely?",
+      "render": "table",
+      "columns": [
+        "initiationmethod",
+        "calls",
+        "with_transcript",
+        "pct_with_transcript"
+      ]
+    },
+    {
+      "id": "t3_delinquent_queues",
+      "tier": 3,
+      "file": "t3_delinquent_queues.sql",
+      "title": "Top queues for delinquent callers (same-month join, last 3 account months)",
+      "question": "Do delinquent accounts ring collections queues or care queues? This decides the queue filter for any collections call analysis.",
+      "render": "bars",
+      "label_col": "queue",
+      "value_col": "delinquent_calls",
+      "columns": [
+        "queue",
+        "delinquent_calls"
+      ]
+    },
+    {
+      "id": "v9_payment_language_by_bucket",
+      "tier": 4,
+      "file": "v9_payment_language_by_bucket.sql",
+      "title": "Payment language: current vs delinquent callers (newest account month)",
+      "question": "The unconditioned payment-talk rate is an upper bound. How does payment / plan / hardship / escalation language differ once you split callers by delinquency?",
+      "render": "table",
+      "columns": [
+        "caller_group",
+        "calls_scanned",
+        "pct_calls_mentioning_payment",
+        "pct_calls_mentioning_plan_or_settlement",
+        "pct_calls_mentioning_hardship",
+        "pct_calls_mentioning_escalation"
+      ]
     }
   ]
 }

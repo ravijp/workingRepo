@@ -122,19 +122,24 @@ Suggested paste order (manifest order — tick them off):
 
 ```text
 Tier 1: t1_acct_size, t1_call_size, t1_transcript_size,
-        t1_initiation_mix, t1_participants, t1_sentiment_mix
+        t1_initiation_mix, t1_participants, t1_sentiment_mix,
+        t1_acctid_fill_trend
 Tier 2: t2_monthly_volume, t2_split_producttype, t2_split_vendor,
         t2_split_site, t2_split_queue, t2_split_auth, t2_split_transfer,
         t2_handle_time, t2_abandon_transfer_monthly, t2_sentiment_monthly,
         t2_utterances_per_call, t2_call_minutes, t2_dpd_buckets,
-        t2_chargeoff_trend
+        t2_chargeoff_trend, t2_transfer_episodes
 Tier 3: t3_match_rate, t3_transcript_coverage, t3_repeat_callers,
         t3_caller_dpd, t3_payment_language, t3_conversation_arc,
-        t3_first_last_speaker
+        t3_first_last_speaker, t3_coverage_by_method, t3_delinquent_queues
 Tier 4: v1_dq1_call_concentration, v2_vintage_roll, v3_caller_vs_noncaller,
         v4_balance_at_risk, v5_payment_after_call, v6_stage_proxy,
-        v7_ib_ob_mix, v8_reage_proxy
+        v7_ib_ob_mix, v8_reage_proxy, v9_payment_language_by_bucket
 ```
+
+Per-card explainer text (window, why, how to read, caveats) lives in
+[sql/explains.md](sql/explains.md) — one `## <query-id>` section per query,
+rendered on the card. Edit the prose there; no code or JSON involved.
 
 If console time is short, the highest-value dozen: the three `t1_*_size`
 queries, `t1_initiation_mix`, `t1_participants`, `t3_match_rate`,

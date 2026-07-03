@@ -26,6 +26,7 @@ depends on. Run order does not matter; each query is independent.
 | `v6_stage_proxy` | Bucket ladder maps onto provision stages | The stage-1/2/3 proxy shape (accounts + balances) to pair with v2's roll rates for an expected-loss ladder |
 | `v7_ib_ob_mix` | "Inbound-only misses most contact" | How much contact volume the inbound lens sees per bucket; keeps outbound separate but sized |
 | `v8_reage_proxy` | "Re-age cases need a flag" | How often deep buckets reset straight to current; sizes the re-age question before chasing a flag |
+| `v9_payment_language_by_bucket` | "Payment talk = payment intent" | Conditions the raw payment-language rate on caller delinquency; current-caller payment talk is mostly servicing noise |
 
 ## What these tables cannot answer (needs other sources)
 

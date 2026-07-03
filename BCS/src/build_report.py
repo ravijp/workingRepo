@@ -41,18 +41,45 @@ def esc(x):
     return html.escape("" if x is None else str(x))
 
 
+_DATEISH = ("snapshot", "date", "calldate", "_dt")
+
+
 def fmt(v, col=""):
     if v is None:
         return "–"
     if isinstance(v, bool):
         return "yes" if v else "no"
     if isinstance(v, (int, float)):
+        # yyyymmdd values (e.g. eff_dt-derived snapshots) read as ints: show as dates
+        if (isinstance(v, int) and 19000101 <= v <= 20991231
+                and any(h in col.lower() for h in _DATEISH)):
+            s = str(v)
+            return f"{s[:4]}-{s[4:6]}-{s[6:]}"
         if col.startswith("pct") or col.endswith(("_pct", "_rate")):
             return f"{v:,.1f}%"
         if isinstance(v, int) or float(v).is_integer():
             return f"{int(v):,}"
         return f"{v:,.2f}"
     return str(v)
+
+
+def load_explains():
+    """Parse sql/explains.md into {query_id: text}. Sections start with '## <id>'."""
+    path = os.path.join(settings.SQL_DIR, "explains.md")
+    if not os.path.exists(path):
+        return {}
+    out, current, buf = {}, None, []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("## "):
+                if current:
+                    out[current] = " ".join(buf).strip()
+                current, buf = line[3:].strip(), []
+            elif current is not None and not line.startswith("# "):
+                buf.append(line.strip())
+    if current:
+        out[current] = " ".join(buf).strip()
+    return out
 
 
 def nice_label(col):
@@ -110,6 +137,7 @@ def svg_line(rows, x_col, y_cols, width=680, height=240):
         out.append(f'<text x="{pad_l - 6}" y="{gy + 4:.1f}" text-anchor="end" class="lbl">{fmt(round(gv, 2))}</text>')
     for i in (0, len(xs) // 2, len(xs) - 1):
         out.append(f'<text x="{sx(i):.1f}" y="{height - 8}" text-anchor="middle" class="lbl">{esc(xs[i])}</text>')
+    end_labels = []
     for si, col in enumerate(y_cols[:4]):
         pts, markers = [], []
         for i, r in enumerate(rows):
@@ -127,10 +155,14 @@ def svg_line(rows, x_col, y_cols, width=680, height=240):
         out.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke-width="2" class="s{si + 1}-stroke"/>')
         out.extend(markers)
         lx, ly = pts[-1].split(",")
-        out.append(
-            f'<text x="{float(lx) + 8:.1f}" y="{float(ly) + 4:.1f}" class="slbl s{si + 1}-fill">'
-            f"{esc(nice_label(col)[:20])}</text>"
-        )
+        end_labels.append([float(lx) + 8, float(ly) + 4, si + 1, nice_label(col)[:20]])
+    # de-collide series end-labels: enforce a minimum vertical gap
+    end_labels.sort(key=lambda l: l[1])
+    for j in range(1, len(end_labels)):
+        if end_labels[j][1] - end_labels[j - 1][1] < 13:
+            end_labels[j][1] = end_labels[j - 1][1] + 13
+    for lx, ly, si, text in end_labels:
+        out.append(f'<text x="{lx:.1f}" y="{ly:.1f}" class="slbl s{si}-fill">{esc(text)}</text>')
     out.append("</svg>")
     return "".join(out)
 
@@ -169,10 +201,12 @@ def pivot(rows, x_col, series_col, value_col):
     return wide, list(series.keys())
 
 
-def render_stat(stat):
+def render_stat(stat, explain=""):
     status = stat.get("status")
     card = [f'<section class="card" id="{esc(stat["id"])}">']
     card.append(f"<h3>{esc(stat.get('title'))}</h3><p class='q'>{esc(stat.get('question'))}</p>")
+    if explain:
+        card.append(f'<p class="explain">{esc(explain)}</p>')
 
     if status != "ok":
         card.append(
@@ -217,10 +251,11 @@ def render_stat(stat):
     return "".join(card)
 
 
-def render_pending(q):
+def render_pending(q, explain=""):
+    exp = f'<p class="explain">{esc(explain)}</p>' if explain else ""
     return (
         f'<section class="card pending" id="{esc(q["id"])}">'
-        f"<h3>{esc(q.get('title'))}</h3><p class='q'>{esc(q.get('question'))}</p>"
+        f"<h3>{esc(q.get('title'))}</h3><p class='q'>{esc(q.get('question'))}</p>{exp}"
         f'<p class="todo">Not run yet — paste <code>sql\\{esc(q["file"])}</code> into the '
         f"Athena query editor, download the results CSV into <code>output\\csv\\</code>, "
         f"then run <code>python run_all.py --import --report</code>.</p></section>"
@@ -264,10 +299,14 @@ def appendix(stats):
         st = s.get("status", "?")
         badge = "badge-ok" if st == "ok" else "badge-fail"
         err = f'<p class="failed">{esc(s.get("error", ""))}</p>' if st != "ok" else ""
+        if s.get("source_csv"):
+            perf = f"imported: {s['source_csv']}"
+        else:
+            perf = f'{s.get("elapsed_s", "-")}s, {s.get("scanned_mb", "-")} MB'
         rows.append(
             f'<details class="appx"><summary><span class="badge {badge}">{esc(st)}</span> '
             f'<code>{esc(s["id"])}</code> — {esc(s.get("title", ""))} '
-            f'<span class="meta">({s.get("elapsed_s", "-")}s, {s.get("scanned_mb", "-")} MB)</span></summary>'
+            f'<span class="meta">({esc(perf)})</span></summary>'
             f"{err}<pre>{esc(s.get('sql', ''))}</pre></details>"
         )
     return "".join(rows)
@@ -304,6 +343,9 @@ h2 { font-size:20px; margin:34px 0 4px; }
 .pending { border-style:dashed; }
 .todo { color:var(--ink-2); font-size:13.5px; }
 .todo code { font-size:12.5px; }
+.explain { color:var(--ink-2); font-size:13px; margin:0 0 12px; padding:8px 12px;
+           border-left:3px solid var(--grid); background:var(--page);
+           border-radius:0 6px 6px 0; max-width:80ch; }
 .tiles { display:flex; flex-wrap:wrap; gap:12px; margin:8px 0; }
 .tile { border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:130px; }
 .tile-v { font-size:22px; font-weight:600; } .tile-l { font-size:12px; color:var(--ink-2); }
@@ -355,6 +397,7 @@ def main():
 
     stats = story.get("stats", [])
     stats_by_id = {s.get("id"): s for s in stats}
+    explains = load_explains()
     manual_mode = story.get("mode") == "manual-csv"
     ok_n = sum(1 for s in stats if s.get("status") == "ok")
     total = len(manifest) or len(stats)
@@ -389,11 +432,12 @@ def main():
                 if q.get("tier") != tier:
                     continue
                 s = stats_by_id.get(q["id"])
-                body.append(render_stat(s) if s else render_pending(q))
+                exp = explains.get(q["id"], "")
+                body.append(render_stat(s, exp) if s else render_pending(q, exp))
         else:
             for s in stats:
                 if s.get("tier") == tier:
-                    body.append(render_stat(s))
+                    body.append(render_stat(s, explains.get(s.get("id"), "")))
 
     body.append('<h2 id="appendix">Appendix — every query, verbatim</h2>')
     body.append(appendix(stats))
