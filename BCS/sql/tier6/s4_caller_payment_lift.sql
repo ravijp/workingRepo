@@ -29,7 +29,7 @@ snap AS (
              ELSE 0
            END AS bucket,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     CROSS JOIN latest
     WHERE sfx_nbr = 0
@@ -72,6 +72,7 @@ callers AS (
           >= cast(date_add('month', -7, latest.d) AS date)
       AND cast(date_trunc('month', "date") AS date)
           <= cast(date_add('month', -2, latest.d) AS date)
+      AND effdt >= '2025-06-01' AND effdt < '2026-04-01'
 ),
 flagged AS (
     SELECT o.bucket, o.paid_next_month,

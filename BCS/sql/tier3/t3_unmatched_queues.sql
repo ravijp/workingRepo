@@ -6,13 +6,14 @@
 -- payment talk is rich, the funnel undercounts exactly its target population
 -- (pairs with f4_match_by_auth: that says WHO fails to match, this says WHERE
 -- and WITH WHAT INTENT). Last complete call month to bound the text scan.
-WITH mx AS (SELECT date_trunc('month', max("date")) AS m1 FROM "contactcenter_bdp_db"."call"),
+WITH mx AS (SELECT date_trunc('month', max("date")) AS m1 FROM "contactcenter_bdp_db"."call" WHERE effdt < cast(date_add('day', -1, current_date) AS varchar)),
 unm AS (
     SELECT contactid,
            coalesce(cast(queue AS varchar), '(blank)') AS queue
     FROM "contactcenter_bdp_db"."call", mx
     WHERE "date" >= date_add('month', -1, mx.m1)
       AND "date" < mx.m1
+      AND effdt >= '2026-01-01' AND effdt < cast(date_add('day', -1, current_date) AS varchar)
       AND initiationmethod = 'INBOUND'
       AND (acctid IS NULL OR trim(cast(acctid AS varchar)) = '')
 ),
@@ -24,6 +25,7 @@ tx AS (
                AS pay_utts
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN unm u ON t.contactid = u.contactid
+     AND t.effdt >= '2026-01-01' AND t.effdt < cast(date_add('day', -1, current_date) AS varchar)
     GROUP BY 1
 )
 SELECT u.queue,

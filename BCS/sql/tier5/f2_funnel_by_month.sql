@@ -24,11 +24,12 @@ WITH snap AS (
            END AS bucket,
            try_cast(chrgoff_dt AS date) AS co_dt,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-07-01'
       AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
+      AND eff_dt >= '20240701' AND eff_dt < '20260301'
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
@@ -47,6 +48,7 @@ inb AS (
     FROM "contactcenter_bdp_db"."call"
     WHERE initiationmethod = 'INBOUND'
       AND "date" >= DATE '2024-07-01' AND "date" < DATE '2025-07-01'
+      AND effdt >= '2024-07-01' AND effdt < '2025-07-02'
 ),
 episodes AS (
     SELECT acct_key, contactid, call_dt,
@@ -80,6 +82,7 @@ tx AS (
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN (SELECT DISTINCT contactid FROM matched WHERE is_delq = 1) d
       ON t.contactid = d.contactid
+     AND t.effdt >= '2024-07-01' AND t.effdt < '2025-07-02'
     GROUP BY 1
 ),
 ep AS (

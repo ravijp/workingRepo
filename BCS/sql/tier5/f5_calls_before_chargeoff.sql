@@ -27,6 +27,7 @@ WITH snap AS (
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-04-01'
       AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
+      AND eff_dt >= '20240401' AND eff_dt < '20260301'
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt
@@ -58,6 +59,7 @@ episodes AS (
         FROM "contactcenter_bdp_db"."call"
         WHERE initiationmethod = 'INBOUND'
           AND "date" >= DATE '2024-07-01' AND "date" < DATE '2026-03-01'
+          AND effdt >= '2024-07-01' AND effdt < '2026-03-02'
           AND acctid IS NOT NULL
     )
     WHERE rn = 1

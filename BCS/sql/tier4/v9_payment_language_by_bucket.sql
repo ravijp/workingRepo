@@ -41,6 +41,7 @@ inb AS (
     JOIN acct a
       ON trim(cast(c.acctid AS varchar)) = trim(cast(a.extnl_acct_id AS varchar))
     WHERE cast(date_trunc('month', c."date") AS date) = cast(am.m1 AS date)
+      AND c.effdt >= '2025-10-01' AND c.effdt < '2026-04-01'
       AND c.initiationmethod = 'INBOUND'
       AND c.acctid IS NOT NULL
 ),
@@ -48,6 +49,7 @@ cust AS (
     SELECT t.contactid, i.bucket, lower(t.content) AS content
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN inb i ON t.contactid = i.contactid
+     AND t.effdt >= '2025-09-01' AND t.effdt < '2026-05-01'
     WHERE t.participantid = 'CUSTOMER'
       AND t.content IS NOT NULL
 ),

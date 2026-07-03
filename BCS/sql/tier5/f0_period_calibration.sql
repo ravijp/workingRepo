@@ -14,8 +14,10 @@ WITH inb AS (
            cast(date_trunc('month', "date") AS date) AS call_month
     FROM "contactcenter_bdp_db"."call"
     WHERE initiationmethod = 'INBOUND'
+      AND effdt < cast(date_add('day', -1, current_date) AS varchar)
 ),
-t AS (SELECT DISTINCT contactid FROM "contactcenter_bdp_db"."transcript")
+t AS (SELECT DISTINCT contactid FROM "contactcenter_bdp_db"."transcript"
+       WHERE effdt < cast(date_add('day', -1, current_date) AS varchar))
 SELECT inb.call_month,
        count(*) AS inbound_calls,
        round(100.0 * count_if(inb.acctid IS NOT NULL

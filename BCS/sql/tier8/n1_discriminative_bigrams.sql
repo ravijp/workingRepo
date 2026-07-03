@@ -33,7 +33,7 @@ snap AS (
              ELSE 0
            END AS bucket,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     CROSS JOIN am
     WHERE sfx_nbr = 0
@@ -63,6 +63,7 @@ delq AS (
      AND cast(nxt.m AS date) = cast(date_add('month', -1, am.d) AS date)
     WHERE cast(date_trunc('month', c."date") AS date)
           = cast(date_add('month', -2, am.d) AS date)
+      AND c.effdt >= '2025-10-01' AND c.effdt < '2026-04-01'
       AND c.initiationmethod = 'INBOUND'
       AND c.acctid IS NOT NULL
       AND s.bucket >= 1
@@ -79,6 +80,7 @@ words AS (
                   x -> x <> '') AS w
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN delq d ON t.contactid = d.contactid
+     AND t.effdt >= '2025-09-01' AND t.effdt < '2026-05-01'
     WHERE t.participantid = 'CUSTOMER'
       AND t.content IS NOT NULL
 ),

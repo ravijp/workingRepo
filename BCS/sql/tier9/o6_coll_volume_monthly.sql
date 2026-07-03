@@ -6,7 +6,7 @@
 -- beside it. Compare against the ops-reported monthly volumes offline; a
 -- large gap means calls exist that this table does not carry, and every
 -- funnel count inherits that caveat. Last 6 complete call months.
-WITH mx AS (SELECT date_trunc('month', max("date")) AS m1 FROM "contactcenter_bdp_db"."call")
+WITH mx AS (SELECT date_trunc('month', max("date")) AS m1 FROM "contactcenter_bdp_db"."call" WHERE effdt < cast(date_add('day', -1, current_date) AS varchar))
 SELECT cast(date_trunc('month', "date") AS date) AS month,
        count(*) AS coll_queue_calls,
        count_if(acctid IS NOT NULL
@@ -17,6 +17,7 @@ SELECT cast(date_trunc('month', "date") AS date) AS month,
 FROM "contactcenter_bdp_db"."call", mx
 WHERE "date" >= date_add('month', -6, mx.m1)
   AND "date" < mx.m1
+  AND effdt >= '2025-11-01' AND effdt < cast(date_add('day', -1, current_date) AS varchar)
   AND initiationmethod = 'INBOUND'
   AND upper(coalesce(cast(queue AS varchar), '')) LIKE 'COLL%'
 GROUP BY 1

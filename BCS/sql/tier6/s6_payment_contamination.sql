@@ -29,11 +29,11 @@ snap AS (
              ELSE 0
            END AS bucket,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt,
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
            coalesce(try_cast(atmtc_paymt_last_dt AS date),
-                    try(cast(date_parse(atmtc_paymt_last_dt, '%d%b%Y') AS date))) AS auto_dt,
+                    try(cast(date_parse(try_cast(atmtc_paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS auto_dt,
            coalesce(try_cast(nsf_last_paymt_dt AS date),
-                    try(cast(date_parse(nsf_last_paymt_dt, '%d%b%Y') AS date))) AS nsf_dt
+                    try(cast(date_parse(try_cast(nsf_last_paymt_dt AS varchar), '%d%b%Y') AS date))) AS nsf_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     CROSS JOIN latest
     WHERE sfx_nbr = 0

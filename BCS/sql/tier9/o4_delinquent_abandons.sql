@@ -44,6 +44,7 @@ inb AS (
     JOIN acct a
       ON trim(cast(c.acctid AS varchar)) = trim(cast(a.extnl_acct_id AS varchar))
     WHERE cast(date_trunc('month', c."date") AS date) = cast(am.m1 AS date)
+      AND c.effdt >= '2025-10-01' AND c.effdt < '2026-04-01'
       AND c.initiationmethod = 'INBOUND'
       AND c.acctid IS NOT NULL
 ),
@@ -55,6 +56,7 @@ recontact AS (
      AND c2.initiationmethod = 'INBOUND'
      AND c2."date" > i.call_dt
      AND c2."date" <= date_add('day', 7, i.call_dt)
+     AND c2.effdt >= '2025-10-01' AND c2.effdt < '2026-04-01'
     WHERE i.abandoned = 1
 )
 SELECT i.bucket AS dpd_bucket,

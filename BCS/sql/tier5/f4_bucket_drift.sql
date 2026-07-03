@@ -52,6 +52,7 @@ episodes AS (
         CROSS JOIN am
         WHERE cast(date_trunc('month', "date") AS date) = cast(am.m1 AS date)
           AND initiationmethod = 'INBOUND'
+          AND effdt >= '2025-10-01' AND effdt < '2026-04-01'
           AND acctid IS NOT NULL
     )
     WHERE rn = 1

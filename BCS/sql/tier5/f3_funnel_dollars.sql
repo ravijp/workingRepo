@@ -33,7 +33,7 @@ WITH snap AS (
            try_cast(chrgoff_dt AS date) AS co_dt,
            try_cast(chrgoff_amt AS double) AS co_amt,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt,
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
            CASE
              WHEN regexp_like(upper(acct_status_rsn_txt), 'FR') THEN 'FR'
              WHEN regexp_like(upper(acct_status_rsn_txt), 'ST') THEN 'ST'
@@ -44,6 +44,7 @@ WITH snap AS (
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-07-01'
       AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
+      AND eff_dt >= '20240701' AND eff_dt < '20260301'
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
@@ -72,6 +73,7 @@ inb AS (
     FROM "contactcenter_bdp_db"."call"
     WHERE initiationmethod = 'INBOUND'
       AND "date" >= DATE '2024-07-01' AND "date" < DATE '2026-02-01'
+      AND effdt >= '2024-07-01' AND effdt < '2026-02-02'
 ),
 episodes AS (
     SELECT acct_key, contactid, call_dt,
@@ -105,6 +107,7 @@ tx AS (
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN (SELECT DISTINCT contactid FROM matched WHERE is_delq = 1) d
       ON t.contactid = d.contactid
+     AND t.effdt >= '2024-07-01' AND t.effdt < '2026-02-02'
     GROUP BY 1
 ),
 funnel_end AS (

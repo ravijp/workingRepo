@@ -10,6 +10,7 @@ WITH inb AS (
     FROM "contactcenter_bdp_db"."call"
     WHERE initiationmethod = 'INBOUND'
       AND "date" >= DATE '2024-07-01' AND "date" < DATE '2025-07-01'
+      AND effdt >= '2024-07-01' AND effdt < '2025-07-02'
 ),
 episodes AS (
     SELECT acct_key, call_dt

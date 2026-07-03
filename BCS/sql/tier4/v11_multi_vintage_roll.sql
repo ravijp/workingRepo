@@ -24,6 +24,7 @@ WITH snap AS (
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-06-01'
       AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
+      AND eff_dt >= '20240601' AND eff_dt < '20260301'
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt

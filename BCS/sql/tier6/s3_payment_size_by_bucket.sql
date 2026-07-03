@@ -26,7 +26,7 @@ snap AS (
              ELSE 0
            END AS bucket,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt,
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
            try_cast(paymt_last_amt AS double) AS pay_amt
     FROM "fmt_acct_dba"."fmt_acct_c"
     CROSS JOIN latest

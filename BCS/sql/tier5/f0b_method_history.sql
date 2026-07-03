@@ -7,5 +7,6 @@ SELECT cast(date_trunc('month', "date") AS date) AS call_month,
        coalesce(initiationmethod, '(blank)') AS initiationmethod,
        count(*) AS calls
 FROM "contactcenter_bdp_db"."call"
+WHERE effdt < cast(date_add('day', -1, current_date) AS varchar)
 GROUP BY 1, 2
 ORDER BY 1, 2

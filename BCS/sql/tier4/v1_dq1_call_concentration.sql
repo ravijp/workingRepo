@@ -41,6 +41,7 @@ inb AS (
     CROSS JOIN am
     WHERE "date" >= cast(date_add('month', -5, am.m1) AS date)
       AND "date" < cast(date_add('month', 1, am.m1) AS date)
+      AND effdt >= '2025-06-01' AND effdt < '2026-04-01'
       AND initiationmethod = 'INBOUND'
       AND acctid IS NOT NULL
 )

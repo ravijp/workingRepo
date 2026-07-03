@@ -3,11 +3,12 @@
 -- (unresolved on the first attempt); month-scale gaps read as cycle-driven
 -- contact. Decides how tight an 'episode' window should be and sizes the
 -- callback burden.
-WITH mx AS (SELECT max("date") AS d FROM "contactcenter_bdp_db"."call"),
+WITH mx AS (SELECT max("date") AS d FROM "contactcenter_bdp_db"."call" WHERE effdt < cast(date_add('day', -1, current_date) AS varchar)),
 inb AS (
     SELECT trim(cast(acctid AS varchar)) AS acct_key, "date" AS call_dt
     FROM "contactcenter_bdp_db"."call", mx
     WHERE "date" > date_add('month', -6, mx.d)
+      AND effdt >= '2025-11-01' AND effdt < cast(date_add('day', -1, current_date) AS varchar)
       AND initiationmethod = 'INBOUND'
       AND acctid IS NOT NULL
 ),

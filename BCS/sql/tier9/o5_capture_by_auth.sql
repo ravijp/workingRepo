@@ -28,7 +28,7 @@ snap AS (
              ELSE 0
            END AS bucket,
            coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(paymt_last_dt, '%d%b%Y') AS date))) AS pay_dt
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     CROSS JOIN am
     WHERE sfx_nbr = 0
@@ -47,6 +47,7 @@ inb AS (
     CROSS JOIN am
     WHERE "date" >= cast(date_add('month', -5, am.m1) AS date)
       AND "date" < cast(am.m1 AS date)
+      AND effdt >= '2025-06-01' AND effdt < '2026-04-01'
       AND initiationmethod = 'INBOUND'
       AND acctid IS NOT NULL
 ),

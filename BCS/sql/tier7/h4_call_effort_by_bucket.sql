@@ -42,6 +42,7 @@ inb AS (
       ON trim(cast(c.acctid AS varchar)) = trim(cast(a.extnl_acct_id AS varchar))
     WHERE cast(date_trunc('month', c."date") AS date)
           = cast(date_add('month', -1, latest.d) AS date)
+      AND c.effdt >= '2025-10-01' AND c.effdt < '2026-04-01'
       AND c.initiationmethod = 'INBOUND'
       AND c.acctid IS NOT NULL
 ),
@@ -51,6 +52,7 @@ tx AS (
            max(try_cast(t.endmillis AS bigint)) / 60000.0 AS minutes
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN (SELECT DISTINCT contactid FROM inb) i ON t.contactid = i.contactid
+     AND t.effdt >= '2025-09-01' AND t.effdt < '2026-05-01'
     GROUP BY 1
 )
 SELECT i.bucket AS dpd_bucket,
