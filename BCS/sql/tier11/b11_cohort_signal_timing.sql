@@ -3,11 +3,14 @@
 -- a, b, c). Three reads, each per bridge class with the episode's capture
 -- rate (f1's clean-payment gate): who raises payment first (h2 logic,
 -- min beginmillis per speaker), whether customer intent shows in the first
--- third of the customer's utterances (n5's ntile logic), and whether
--- customer payment talk met an agent plan/assistance offer (n4 lexicons).
--- Signals 1-3 partition the episodes; 4-5 cover intent episodes only; 6-7
--- cover customer-intent episodes only. Episodes without a transcript count
--- under signal 3 and nowhere else.
+-- third of the CALL TIME (first intent timestamp within a third of the
+-- call's span - a time-based stand-in for n5's utterance terciles; the
+-- first version used ntile() plus a second transcript pass and exhausted
+-- cluster memory, so this build is one transcript pass, aggregates only),
+-- and whether customer payment talk met an agent plan/assistance offer
+-- (n4 lexicons). Signals 1-3 partition the episodes; 4-5 cover intent
+-- episodes only; 6-7 cover customer-intent episodes only. Episodes without
+-- a transcript count under signal 3 and nowhere else.
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -158,31 +161,13 @@ tx AS (
            count_if(t.participantid = 'AGENT' AND t.content IS NOT NULL
                     AND regexp_like(lower(t.content),
                         'payment plan|arrangement|settle|work something out|hardship program|assistance program|payment program'))
-               AS agent_offer_n
+               AS agent_offer_n,
+           min(try_cast(t.beginmillis AS bigint)) AS call_start_ms,
+           max(try_cast(t.beginmillis AS bigint)) AS call_end_ms
     FROM "contactcenter_bdp_db"."transcript" t
     JOIN (SELECT DISTINCT contactid FROM ep) d
       ON t.contactid = d.contactid
      AND t.effdt >= '2025-01-01' AND t.effdt < '2025-02-02'
-    GROUP BY 1
-),
-cust AS (
-    SELECT t.contactid,
-           regexp_like(lower(t.content),
-               'pay|paid|payment|settle|payment plan|arrangement|work something out') AS intent,
-           ntile(3) OVER (PARTITION BY t.contactid
-                          ORDER BY try_cast(t.beginmillis AS bigint)) AS cust_third
-    FROM "contactcenter_bdp_db"."transcript" t
-    JOIN (SELECT DISTINCT contactid FROM ep) d
-      ON t.contactid = d.contactid
-     AND t.effdt >= '2025-01-01' AND t.effdt < '2025-02-02'
-    WHERE t.participantid = 'CUSTOMER'
-      AND t.content IS NOT NULL
-),
-early AS (
-    SELECT contactid,
-           count_if(intent AND cust_third = 1) AS early_n,
-           count_if(intent) AS any_n
-    FROM cust
     GROUP BY 1
 ),
 ep2 AS (
@@ -190,11 +175,12 @@ ep2 AS (
            x.cust_first, x.agent_first,
            coalesce(x.cust_pay_n, 0) AS cust_pay_n,
            coalesce(x.agent_offer_n, 0) AS agent_offer_n,
-           coalesce(y.early_n, 0) AS early_n,
-           coalesce(y.any_n, 0) AS any_n
+           coalesce(x.cust_first IS NOT NULL
+                    AND x.call_end_ms > x.call_start_ms
+                    AND (x.cust_first - x.call_start_ms) * 3
+                        <= (x.call_end_ms - x.call_start_ms), false) AS intent_early
     FROM ep e
     LEFT JOIN tx x ON e.contactid = x.contactid
-    LEFT JOIN early y ON e.contactid = y.contactid
 )
 SELECT '1. customer raises payment first' AS b11_signal,
        bridge_class AS b11_bridge_class,
@@ -218,12 +204,12 @@ GROUP BY 2
 UNION ALL SELECT '4. intent in first third of call', bridge_class,
        count(*), round(100.0 * sum(captured) / count(*), 1)
 FROM ep2
-WHERE early_n > 0
+WHERE intent_early
 GROUP BY 2
 UNION ALL SELECT '5. intent later in call only', bridge_class,
        count(*), round(100.0 * sum(captured) / count(*), 1)
 FROM ep2
-WHERE any_n > 0 AND early_n = 0
+WHERE cust_first IS NOT NULL AND NOT intent_early
 GROUP BY 2
 UNION ALL SELECT '6. customer intent + agent offer', bridge_class,
        count(*), round(100.0 * sum(captured) / count(*), 1)
