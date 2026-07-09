@@ -1509,6 +1509,39 @@
         "jan_inbound_episodes",
         "pct_accounts_calling"
       ]
+    },
+    {
+      "id": "b8_cohort_funnel",
+      "tier": 11,
+      "file": "tier11/b8_cohort_funnel.sql",
+      "title": "The 202501 cohort funnel: January calls per bridge class",
+      "question": "For the DQ1 cohort (classes a, b, c), how do January inbound episodes narrow from call to transcript to payment language to leaked to charged off within 8 months, per class?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b8_stage",
+        "b8_bridge_class",
+        "b8_episodes",
+        "b8_accounts"
+      ]
+    },
+    {
+      "id": "b9_cohort_outcomes",
+      "tier": 11,
+      "file": "tier11/b9_cohort_outcomes.sql",
+      "title": "Cohort outcomes: charge-off by class and January caller status",
+      "question": "Within each bridge class, how do non-callers, captured callers, and leaked callers charge off at 8, 10, and 12 months - the shares to set against Ishant's CO_8M/10M/12M?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b9_bridge_class",
+        "b9_caller_status",
+        "b9_accounts",
+        "b9_co_8m",
+        "b9_co_10m",
+        "b9_co_12m",
+        "b9_pct_co_12m"
+      ]
     }
   ]
 }
