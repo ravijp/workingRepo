@@ -1542,6 +1542,38 @@
         "b9_co_12m",
         "b9_pct_co_12m"
       ]
+    },
+    {
+      "id": "b10_cohort_language",
+      "tier": 11,
+      "file": "tier11/b10_cohort_language.sql",
+      "title": "Cohort language: what January callers say, per bridge class",
+      "question": "Which language group does each cohort episode fall into (promise, payment talk, plan, hardship, dispute, none), and what are each group's capture and 12-month charge-off rates?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b10_language_group",
+        "b10_bridge_class",
+        "b10_episodes",
+        "b10_accounts",
+        "b10_pct_captured",
+        "b10_pct_co_12m"
+      ]
+    },
+    {
+      "id": "b11_cohort_signal_timing",
+      "tier": 11,
+      "file": "tier11/b11_cohort_signal_timing.sql",
+      "title": "Cohort signal timing: who raises payment, how early, met by an offer?",
+      "question": "On the cohort's January episodes, does the customer or agent raise payment first, is intent visible in the first third of the call, and does customer intent meet an agent offer - each with its capture rate, per bridge class?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b11_signal",
+        "b11_bridge_class",
+        "b11_episodes",
+        "b11_pct_captured"
+      ]
     }
   ]
 }
