@@ -151,6 +151,12 @@ story from the downloaded results:
    markdown tables, core queries first. Screenshot that one file to carry a
    whole run out of the environment; the HTML stays for walking the story.
 
+   `--story` writes `output\uc2_story.html` — the act-ordered story report:
+   the January 2025 story acts (from `sql/act_map.json`) with narrative
+   interleaved and each act's query cards under it. Same imported results as
+   the atlas; missing queries render as pending cards, so it fills in as CSVs
+   land. The full `bcs_story.html` stays the 88-query atlas.
+
 Imports **merge**: run two queries today and five tomorrow, re-import any
 time — nothing already imported is lost, and a newer download of the same
 query replaces the older one. Queries without a CSV yet appear in the report

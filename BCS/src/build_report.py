@@ -72,6 +72,15 @@ TIER_INTRO = {
         "caller status (b9), what customers said and what each language "
         "group was worth (b10), and whether the signal shows early enough "
         "to act on live (b11). Grain is stated on every step."),
+    12: ("Mined language - the cohort lexicon upgrade",
+         "The hybrid upgrade's SQL side: phrases (bigrams and trigrams) mined "
+         "from the January cohort's hardest class - still DQ1 at month-end - "
+         "against the capture gate (m1) and the 12-month charge-off (m2), one "
+         "transcript pass each, aggregates only. Winners are lexicon "
+         "candidates: an LLM read of a small stratified sample proposes more, "
+         "and every candidate is re-measured at full count before it enters "
+         "the story. m3 probes the PII surface (metadata only) ahead of any "
+         "sample export; the export itself is gated on governance (A-066)."),
     1: ("The shape of the data",
         "Row counts, time coverage, freshness and key fill rates. This tier says "
         "what the three tables actually contain before any interpretation."),
@@ -94,7 +103,7 @@ TIER_INTRO = {
 # Story tiers lead: what leaks (5), what it's worth (6), where in the
 # operation (9), what follows (10), why the signal is trusted (7), can rules
 # rank it live (8). Foundation tiers follow.
-TIER_ORDER = (5, 6, 9, 10, 11, 7, 8, 1, 2, 3, 4)
+TIER_ORDER = (5, 6, 9, 10, 11, 12, 7, 8, 1, 2, 3, 4)
 
 
 def esc(x):

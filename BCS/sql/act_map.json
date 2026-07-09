@@ -1,0 +1,54 @@
+{
+  "comment": "Act map for the act-ordered story report (build_story_report.py). Binds the January 2025 story acts (uc2-jan2025-story-v3.md) to query cards. The 88-query bcs_story.html stays the atlas; this report walks the story. Narrative strings are plain text paragraphs rendered between the act title and its cards. Cards render from the same story_data.json the atlas uses; queries without a CSV yet render as pending cards, so the report builds up as results land.",
+  "title": "UC2 - the January 2025 story",
+  "subtitle": "One vintage month, tied account for account to the SAS/ASP waterfall, priced in reserve currency where the inputs are client-validated. Grain is stated next to every count: month-end = position on Jan 31 (what reporting sees); month-max = worst bucket touched during January (what customers experience). Presentation script: uc2-jan2025-story-v3.md.",
+  "acts": [
+    {
+      "id": "act1",
+      "title": "Act 1 - your January number, priced, and the leak inside it",
+      "narrative": [
+        "The anchor: 186,412 accounts at DLNQT_CD=1 at January month-end (his filters: ex-AA, charge-off reasons blank+PLY), carrying $454.2M of balance and $93.5M of ECL - 20.6% coverage, on the DQ1 rung of the coverage ladder. Counts, balances, and ECL from Ishant's SAS/ASP pivot, validated live with Anupam on 07-08. Our Athena rebuild of the same month-end stock is 207,006 accounts; the five-step bridge is the appendix section below.",
+        "Inside that population: the leak list. Of the still-DQ1-at-EOM class (151,113 accounts month-end grain after cleanup, $341.3M balance), 7,392 called inbound in January (4.9%); 5,537 episodes carried customer payment or plan language; 2,187 episodes / 1,970 accounts leaked - intent, then no payment within 30 days (39.5% of intent episodes). Of the leaked accounts, 729 (37.0%) charged off within 8 months. Per-account ECL on that list is OPEN with Ishant (SAS-side field).",
+        "Standing disclosure for every call number: only verified calls join to accounts; about 21% of inbound is unjoinable, so call counts are floors. The cure split behind the wider inflow (493,139 month-max entrants, 69% cured in-month) is partly runway, not behavior - b13 measures cure by entry day-of-month."
+      ],
+      "queries": ["b1_cohort_ladder", "b8_cohort_funnel", "b7_call_overlay", "b13_cycle_confound"]
+    },
+    {
+      "id": "act2",
+      "title": "Act 2 - what a roll costs, in reserve currency",
+      "narrative": [
+        "This act's numbers live on the SAS side, not in Athena cards. Of the 186,412: by February month-end 56.7% cured (105,715, still carrying $34.8M ECL at M1), 8.0% stayed at code 1 (15,002), 35.2% rolled to code 2 (65,585). The rolled slice's ECL: $40.2M (M1) to $69.2M (M2) to $98.7M (M3) - a +$29.0M step in the roll month, roughly $440 per rolled account. Vintage coverage climbs 20.6% to 36.7% to 39.7% while balance runs down. Prevented rolls are valued at M2 per the client's own practice (ECL runs on calendar EOM, treatment runs on cycles - Anupam 07-08).",
+        "Carve-outs stated before anyone asks: the +$29.0M is a blend of HRAM and non-HRAM accounts (an HRAM account is stage 2 pre-roll, so its 1-to-2 move carries no coverage step); the HRAM split is OPEN with Ishant. Staging is customer-level, so account-grain stage reads carry contamination. One further stage finding is held pending the A-068 data check.",
+        "Source: Ishant's pivot, transcribed in records/ishant-sas-waterfall-202501-2026-07-09.md; mechanics in the 07-08 meeting notes. The roll mirror below shows the Athena side of the same transitions."
+      ],
+      "queries": ["b6_m2_roll_mirror"]
+    },
+    {
+      "id": "act3",
+      "title": "Act 3 - the words rank the risk, live",
+      "narrative": [
+        "96.2% of the cohort's January episodes have a speaker-split transcript, read full-count with short printed keyword lists - no model, no sampling. In the still-DQ1 class, language separates a 15.9% twelve-month loss (promise with a date, 67.4% captured) from a 48.5% one (plan/settlement talk, 38.6% captured), inside one bucket, one month. Quoted in table order; the rank is not perfectly monotone and the small cells (73, 21, 48 episodes) are directional only.",
+        "Timing: when intent exists it shows in the first third of the call about 80% of the time - a live read is realistic. The early-vs-late capture gap (62.9% vs 51.2%) is association, quoted as feasibility, not lift. The agent-offer line reads backwards on purpose: an offered plan marks a call already in trouble.",
+        "The causal guard: for 31,804 accounts (platform-wide, funnel window) with BOTH a captured and a leaked episode, captured episodes go current next month at 56% vs 42%, and leaked go deeper at 36% vs 10%. Same customer, own control."
+      ],
+      "queries": ["b10_cohort_language", "b11_cohort_signal_timing", "x4_within_account_contrast"]
+    },
+    {
+      "id": "act4",
+      "title": "Act 4 - the play",
+      "narrative": [
+        "Three moves on data the bank already collects. One: read the call live - intent shows in the first third 80% of the time, and 42% of captured payments land the same day as the call (platform-wide grain). Two: work the leak list - about 2,200 conversations a month, ranked by the language table, with the ask sized by Jeff's stabilization payment (greater of oldest bucket amount and current cycle minimum). Three: monitor month-max next to month-end - the in-month curers make 87% of this cohort's calls and are invisible at EOM.",
+        "Credibility line: the ladder independently found and sized the population the re-age redesign targets - 31,511 December churners (month-end grain, one month), measured in the cleanup audit below."
+      ],
+      "queries": ["x5_payment_latency", "b12_cleanup_check"]
+    },
+    {
+      "id": "appendix",
+      "title": "Appendix - the reconciliation ladder (the trust asset)",
+      "narrative": [
+        "Five measured steps from 493,139 (month-max entrants) to 186,412 (month-end, his filters): 69.1% intra-month cure to 152,177; stock vs entrant conditioning to 207,006; the 2.2% ASP definition boundary to 202,479; the reason filter (947) to 201,532; the AA book (15,120) to 186,412. Every step a count; his number sits inside our ladder, not beside it. Cross-checks: roll shares within ~2pp (b6), CO curves within ~1pp (b9), charge-off perimeter consistent (b5), entry definition slack zero (b2), month-end = calendar EOM for everyone (b3)."
+      ],
+      "queries": ["b2_entry_lookback", "b3_snapshot_cadence", "b4_eom_bucket_by_entry", "b5_co_scope", "b9_cohort_outcomes"]
+    }
+  ]
+}

@@ -1587,6 +1587,79 @@
         "b12_check_step",
         "b12_accounts"
       ]
+    },
+    {
+      "id": "b13_cycle_confound",
+      "tier": 11,
+      "file": "tier11/b13_cycle_confound.sql",
+      "title": "Cycle confound: cure-by-EOM by entry day-of-month",
+      "question": "How much of the 69/31 cured-vs-still split is in-month runway (entry day) rather than customer behavior?",
+      "render": "line",
+      "x_col": "b13_entry_day",
+      "y_cols": [
+        "b13_pct_cured"
+      ],
+      "story": "core",
+      "columns": [
+        "b13_entry_day",
+        "b13_days_runway",
+        "b13_entrants",
+        "b13_cured_by_eom",
+        "b13_still_dq_eom",
+        "b13_pct_cured"
+      ]
+    },
+    {
+      "id": "m1_stilldq1_phrases_capture",
+      "tier": 12,
+      "file": "tier12/m1_stilldq1_phrases_capture.sql",
+      "title": "Mined phrases: captured vs leaked, still-DQ1 class",
+      "question": "Which customer bigrams/trigrams separate captured from leaked episodes in the cohort's hardest class?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "m1_side",
+        "m1_phrase",
+        "m1_words",
+        "m1_eps_captured",
+        "m1_eps_leaked",
+        "m1_pct_of_captured",
+        "m1_pct_of_leaked",
+        "m1_lift"
+      ]
+    },
+    {
+      "id": "m2_stilldq1_phrases_co",
+      "tier": 12,
+      "file": "tier12/m2_stilldq1_phrases_co.sql",
+      "title": "Mined phrases: charge-off vs survival, still-DQ1 class",
+      "question": "Which customer bigrams/trigrams mark the accounts that go on to charge off within 12 months?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "m2_side",
+        "m2_phrase",
+        "m2_words",
+        "m2_eps_co12",
+        "m2_eps_no_co",
+        "m2_pct_of_co12",
+        "m2_pct_of_no_co",
+        "m2_lift"
+      ]
+    },
+    {
+      "id": "m3_transcript_pii_surface",
+      "tier": 12,
+      "file": "tier12/m3_transcript_pii_surface.sql",
+      "title": "PII surface probe: transcript table twins (metadata only)",
+      "question": "Does the Athena transcript surface have a *_HI_SNSTV vs *_NON_PRV split, and which tables are in scope for a sample export?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "m3_table_schema",
+        "m3_table_name",
+        "m3_pattern"
+      ]
     }
   ]
 }

@@ -30,12 +30,14 @@ def main():
     ap.add_argument("--import", dest="import_csvs", action="store_true",
                     help="import console CSV downloads from output/csv/ (manual mode)")
     ap.add_argument("--report", action="store_true", help="rebuild the HTML report")
+    ap.add_argument("--story", action="store_true",
+                    help="rebuild the act-ordered story report (output/uc2_story.html)")
     ap.add_argument("--digest", action="store_true",
                     help="write output/digest.md - every result as compact markdown")
     args = ap.parse_args()
 
     run_all = not (args.check or args.fetch or args.import_csvs or args.report
-                   or args.digest)
+                   or args.story or args.digest)
 
     if run_all or args.check:
         from src import check_connection
@@ -64,6 +66,10 @@ def main():
         rc = build_report.main()
         if rc == 0:
             print(f"\nOpen the story:  {settings.REPORT_HTML}")
+
+    if run_all or args.story:
+        from src import build_story_report
+        rc = build_story_report.main() or rc
 
     if run_all or args.digest:
         from src import build_digest
