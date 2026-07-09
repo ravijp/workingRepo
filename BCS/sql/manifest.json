@@ -1477,6 +1477,38 @@
         "co_accounts",
         "co_eom_balance"
       ]
+    },
+    {
+      "id": "b6_m2_roll_mirror",
+      "tier": 11,
+      "file": "tier11/b6_m2_roll_mirror.sql",
+      "title": "M2/M3 roll mirror: the January EOM bucket-1 stock, two months on",
+      "question": "Where does the January month-END bucket-1 stock sit at end February and end March, split by entrant vs already-delinquent - the shares to set against Ishant's M1=1 x M2 x M3 pivot?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "m2_bucket_202502",
+        "m3_bucket_202503",
+        "roll_entry_class",
+        "roll_accounts",
+        "roll_eom_balance_jan"
+      ]
+    },
+    {
+      "id": "b7_call_overlay",
+      "tier": 11,
+      "file": "tier11/b7_call_overlay.sql",
+      "title": "Call overlay: January inbound callers by bridge class",
+      "question": "How often does each bridge class call inbound in January - especially the month-max entrants who cure by month-end and are invisible to ASP?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "bridge_class",
+        "class_accounts",
+        "jan_inbound_callers",
+        "jan_inbound_episodes",
+        "pct_accounts_calling"
+      ]
     }
   ]
 }
