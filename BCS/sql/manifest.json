@@ -1574,6 +1574,19 @@
         "b11_episodes",
         "b11_pct_captured"
       ]
+    },
+    {
+      "id": "b12_cleanup_check",
+      "tier": 11,
+      "file": "tier11/b12_cleanup_check.sql",
+      "title": "Cleanup check: the pre-2025 charge-off exclusion, made visible",
+      "question": "Exactly which accounts the b7-b11 cleanup removes (old charge-off dates on January rows), and what the 31,810 deeper-path month-end entrants are made of.",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b12_check_step",
+        "b12_accounts"
+      ]
     }
   ]
 }

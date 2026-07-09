@@ -61,13 +61,17 @@ TIER_INTRO = {
         "funnel into a value case. Association still rides every split here "
         "except the within-account contrast, which controls who calls."),
     11: ("The cohort bridge",
-        "The 202501 reconciliation between the Athena month-MAX DQ1 entrant "
-        "count and the SAS/ASP month-END DLNQT_CD=1 count: a stepped ladder "
-        "from one to the other, the entry-definition lookback, the snapshot "
-        "cadence behind 'month-end', the month-end bucket split by entry "
-        "class, and the charge-off scope probes. Grain is stated on every "
-        "step; Ishant's pivot filters (cpc, charge-off reason) have no "
-        "Athena mirror and sit with him as counter-asks."),
+        "The January 2025 vintage, end to end. First the reconciliation: a "
+        "stepped ladder from the Athena month-MAX DQ1 entrant count (493,139) "
+        "to the SAS/ASP month-END DLNQT_CD=1 count (186,412), with the "
+        "entry-definition lookback, the snapshot cadence behind 'month-end', "
+        "the bucket-by-entry-class split, the charge-off scope probes, and "
+        "the cleanup audit (b12). Then the cohort story on the reconciled "
+        "definition: the roll mirror against the SAS pivot (b6), who called "
+        "in January (b7), the funnel inside the cohort (b8), charge-off by "
+        "caller status (b9), what customers said and what each language "
+        "group was worth (b10), and whether the signal shows early enough "
+        "to act on live (b11). Grain is stated on every step."),
     1: ("The shape of the data",
         "Row counts, time coverage, freshness and key fill rates. This tier says "
         "what the three tables actually contain before any interpretation."),
