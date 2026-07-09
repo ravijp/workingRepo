@@ -1648,6 +1648,103 @@
       ]
     },
     {
+      "id": "b14_ledger_transitions",
+      "tier": 11,
+      "file": "tier11/b14_ledger_transitions.sql",
+      "title": "Ledger transitions: the cleaned Jan-31 bucket-1 ledger into February",
+      "question": "Where does the 204,323-account ledger sit at Feb EOM, split by caller class and in-month runway band - the full-count replacement for b6's truncated shares, with the cleaned Jan-31 EOM balance?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b14_feb_position",
+        "b14_caller_class",
+        "b14_runway_band",
+        "b14_accounts",
+        "b14_jan_eom_balance"
+      ]
+    },
+    {
+      "id": "b15_leaklist_forward",
+      "tier": 11,
+      "file": "tier11/b15_leaklist_forward.sql",
+      "title": "The leak list followed forward: 2,394 leaked-intent accounts",
+      "question": "Where do the ledger's leaked-intent accounts sit at Feb and Mar EOM, how many charge off at 8/10/12 months, and how much of the list carries deceased-estate language?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b15_deceased_flag",
+        "b15_feb_position",
+        "b15_mar_position",
+        "b15_accounts",
+        "b15_co_8m",
+        "b15_co_10m",
+        "b15_co_12m",
+        "b15_jan_eom_balance"
+      ]
+    },
+    {
+      "id": "b16_within_cohort_contrast",
+      "tier": 11,
+      "file": "tier11/b16_within_cohort_contrast.sql",
+      "title": "Within-cohort contrast: paid vs no-pay episodes, same ledger accounts",
+      "question": "For ledger accounts with BOTH a paid-30d and a no-pay-30d January intent episode, how do the two episode outcomes distribute over the account's Feb-EOM position - the cohort-native x4 guard?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b16_episode_outcome",
+        "b16_feb_position",
+        "b16_episodes",
+        "b16_accounts"
+      ]
+    },
+    {
+      "id": "b17_callday_population",
+      "tier": 11,
+      "file": "tier11/b17_callday_population.sql",
+      "title": "Call-day population: the operable January call stream",
+      "question": "How many January inbound episodes come from accounts delinquent AT CALL TIME, by bucket at call and days since the spell's first delinquent snapshot - the knowable-at-call-time sizing that makes the bucket-1 scope choice explicit?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b17_bucket_at_call",
+        "b17_days_since_first_dq",
+        "b17_episodes",
+        "b17_accounts"
+      ]
+    },
+    {
+      "id": "b18_join_gap",
+      "tier": 11,
+      "file": "tier11/b18_join_gap.sql",
+      "title": "Join gap: verified-joined vs unjoinable January inbound, weekly",
+      "question": "Week by week, how many January inbound calls resolve to the account master, and of the joined, how many show a call-day bucket >= 1 - the historical baseline for pilot-time joinability?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b18_call_week",
+        "b18_join_status",
+        "b18_calls"
+      ]
+    },
+    {
+      "id": "m4_deceased_group",
+      "tier": 12,
+      "file": "tier12/m4_deceased_group.sql",
+      "title": "Deceased-estate group: the ledger's January callers, b10-style",
+      "question": "With a deceased-estate lexicon on top of the b10 partition, how do the ledger's 12,544 January episodes split, and what are each group's paid-30d, 8- and 12-month charge-off, and leaked-intent overlap - the routing-rule decision table?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "m4_group",
+        "m4_episodes",
+        "m4_accounts",
+        "m4_pct_paid_30d",
+        "m4_co_8m_accounts",
+        "m4_co_12m_accounts",
+        "m4_leaked_intent_accounts"
+      ]
+    },
+    {
       "id": "m3_transcript_pii_surface",
       "tier": 12,
       "file": "tier12/m3_transcript_pii_surface.sql",
