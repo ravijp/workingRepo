@@ -60,6 +60,14 @@ TIER_INTRO = {
         "validates the funnel's 8-month horizon. The evidence that turns the "
         "funnel into a value case. Association still rides every split here "
         "except the within-account contrast, which controls who calls."),
+    11: ("The cohort bridge",
+        "The 202501 reconciliation between the Athena month-MAX DQ1 entrant "
+        "count and the SAS/ASP month-END DLNQT_CD=1 count: a stepped ladder "
+        "from one to the other, the entry-definition lookback, the snapshot "
+        "cadence behind 'month-end', the month-end bucket split by entry "
+        "class, and the charge-off scope probes. Grain is stated on every "
+        "step; Ishant's pivot filters (cpc, charge-off reason) have no "
+        "Athena mirror and sit with him as counter-asks."),
     1: ("The shape of the data",
         "Row counts, time coverage, freshness and key fill rates. This tier says "
         "what the three tables actually contain before any interpretation."),
@@ -82,7 +90,7 @@ TIER_INTRO = {
 # Story tiers lead: what leaks (5), what it's worth (6), where in the
 # operation (9), what follows (10), why the signal is trusted (7), can rules
 # rank it live (8). Foundation tiers follow.
-TIER_ORDER = (5, 6, 9, 10, 7, 8, 1, 2, 3, 4)
+TIER_ORDER = (5, 6, 9, 10, 11, 7, 8, 1, 2, 3, 4)
 
 
 def esc(x):

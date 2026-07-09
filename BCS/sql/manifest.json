@@ -1,5 +1,5 @@
 {
-  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation / 5 funnel / 6 sizing inputs / 7 conversation / 8 learned language / 9 operations / 10 follow-through), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, story (core | context - context cards render collapsed), and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
+  "comment": "Query registry. Each entry: id, tier (1 basic / 2 medium / 3 complex / 4 approach-validation / 5 funnel / 6 sizing inputs / 7 conversation / 8 learned language / 9 operations / 10 follow-through / 11 cohort bridge (b-series)), file in this folder, title + question for the report, render (kpis | bars | line | table) with its column hints, story (core | context - context cards render collapsed), and columns = the exact output header (used to auto-match console CSV downloads in manual mode). Optional fallback_file runs/applies if the primary fails. Add or swap queries here without touching src/.",
   "queries": [
     {
       "id": "t1_acct_size",
@@ -1406,6 +1406,76 @@
         "latency_band",
         "captured_episodes",
         "pct_of_captured"
+      ]
+    },
+    {
+      "id": "b1_cohort_ladder",
+      "tier": 11,
+      "file": "tier11/b1_cohort_ladder.sql",
+      "title": "The 202501 cohort ladder: month-max to month-end, step by step",
+      "question": "How does the Athena 493k month-MAX DQ1 entrant count step down toward Ishant's 186k month-END DLNQT_CD=1, and how big is each step?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "cohort_step",
+        "accounts_202501",
+        "eom_balance_202501"
+      ]
+    },
+    {
+      "id": "b2_entry_lookback",
+      "tier": 11,
+      "file": "tier11/b2_entry_lookback.sql",
+      "title": "Entry-definition lookback: v11 lag vs strict December prior",
+      "question": "How much of the entrant count comes from v11's lag-over-present-months definition rather than a strict 202412 prior?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "entry_variant",
+        "accounts_monthmax_b1"
+      ]
+    },
+    {
+      "id": "b3_snapshot_cadence",
+      "tier": 11,
+      "file": "tier11/b3_snapshot_cadence.sql",
+      "title": "Snapshot cadence in 202501: what month-end means here",
+      "question": "How many snapshot dates does an account carry in January 2025, and does the last one land on the calendar end of month?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "snapshot_metric",
+        "metric_value",
+        "accounts_202501_b3"
+      ]
+    },
+    {
+      "id": "b4_eom_bucket_by_entry",
+      "tier": 11,
+      "file": "tier11/b4_eom_bucket_by_entry.sql",
+      "title": "Month-end bucket by entry class: can a new roll land deep?",
+      "question": "Split the 202501 month-END delinquents by bucket and entry class - do deep buckets come from new rolls, prior delinquents, or accounts with no December row?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "eom_bucket_202501",
+        "entry_class_202501",
+        "bridge_accounts",
+        "bridge_eom_balance"
+      ]
+    },
+    {
+      "id": "b5_co_scope",
+      "tier": 11,
+      "file": "tier11/b5_co_scope.sql",
+      "title": "Charge-off scope probes around January 2025",
+      "question": "How many accounts charge off in January with no delinquency bucket (straight-to-CO), while delinquent, or sit as pre-2025 CO stock still carrying rows?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "co_scope_step",
+        "co_accounts",
+        "co_eom_balance"
       ]
     }
   ]
