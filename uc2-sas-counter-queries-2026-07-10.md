@@ -2,9 +2,14 @@
 
 Split ownership per the 2026-07-10 decision: Athena owns the funnel + transcript
 story; SAS owns the dollar layer (ECL, stages, HRAM, payments). These queries
-run on Ishant's side against `zenon.waterfall_dtl_expd_coll_202501` (the wide
-vintage table, fields as transcribed in
-[records/ishant-sas-waterfall-202501-2026-07-09.md](records/ishant-sas-waterfall-202501-2026-07-09.md)).
+run on Ishant's side against the account-wide vintage table. Per the build code
+(transcribed 2026-07-10,
+[records/ishant-sas-code-transcription-2026-07-10.md](records/ishant-sas-code-transcription-2026-07-10.md))
+that table is `zenon.waterfall_acct_coll_202501` (file 03 output; `_v1_` is the
+same without call types). Ishant: the 07-08 pivot tab showed
+`WATERFALL_DTL_EXPD_COLL_202501`, which does not appear in the shared code —
+please run against whichever is current and say which. Field reference:
+[records/ishant-sas-waterfall-202501-2026-07-09.md](records/ishant-sas-waterfall-202501-2026-07-09.md).
 We consume **aggregates only** — counts and sums, no account rows. Hand this file
 over verbatim. CQ-1 to CQ-3 are the original pack; CQ-4 to CQ-8 were appended
 2026-07-10 from the cohort-picture arbitration
@@ -15,8 +20,11 @@ Baseline filters, same as every shared pivot (apply unless a query says otherwis
 `CHRGOFF_RSN_M1 in ('blank','PLY')`. Grain: everything here is month-END
 (DLNQT_CD is the month-end position).
 
-Note on flag coding: CO_8M/10M/12M_FLAG and call_type_INB are written below as
-`='Y'` — adjust to however they are coded in the table (0/1 or Y/N).
+Codings confirmed from the build code (2026-07-10): CO_CURRENT/8M/10M/12M flags
+are numeric 1/0; the account key is `EXTNL_ACCT_ID`; the impairment join is
+`EXTNL_ACCT_ID` + `RPTG_PRD_MNTH_BID` (impairment side derived from
+IMPRMNT_RPTG_MNTH_CD 'YYYYMMM'); the impairment source view is
+`pcds2.V_IFRS9_NON_PMA_IMPRMNT_OUTPUT`.
 
 ## CQ-1 — the caller dollar layer (code-1 x inbound-caller x February outcome, with ECL)
 
@@ -37,8 +45,8 @@ proc sql;
          sum(ECL_M3)                               as ecl_m3,
          sum(EOP_BAL_M1)                           as eop_bal_m1,
          sum(EOP_BAL_M2)                           as eop_bal_m2,
-         sum(case when CO_12M_FLAG='Y' then 1 else 0 end) as co_12m
-  from zenon.waterfall_dtl_expd_coll_202501
+         sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
+  from zenon.waterfall_acct_coll_202501
   where COHORT_ENTRY='DPD1PLUS'
     and DLNQT_CD_M1='1'
     and cpc_M1='others'
@@ -50,11 +58,15 @@ quit;
 
 Return: the full result (it is ~16 rows). Please also state, one line each:
 
-1. The **definition of `call_type_INB`**: which call table, what window (January
-   only or ever?), inbound only or any contact, verified calls only or all? Our
-   Athena caller overlay counts only verified inbound (acctid present); if your
-   flag has the same verified-only limitation, both sides share the ~21% blind
-   spot and we will say so; if not, this flag sees callers we cannot.
+1. The **build of `work.call_accts_jan_mar_25`**. Your file 03 shows
+   call_type_INB = max(initiationmethod='INBOUND') from that work table grouped
+   by extnl_acct_id, but the code that builds the work table is not in the
+   shared files. Two things we need: (a) its source and filter (AWS call table?
+   only rows with an account id, i.e. verified-only like our side?); (b) confirm
+   the window is January-March 2025 as the name suggests. Note for reading the
+   result: your flag is then "called inbound at any point Jan-Mar", while our b7
+   counts January callers only, so the counts will not match by construction;
+   we reconcile on definitions, not on equality.
 2. Whether the same cut can be rerun with filters open (`cpc_M1=(All)`,
    `CHRGOFF_RSN_M1=(All)`) — one screenshot, for the reconciliation margin.
 
@@ -98,8 +110,8 @@ proc sql;
          sum(ECL_M2)       as ecl_m2,
          sum(ECL_M3)       as ecl_m3,
          sum(EOP_BAL_M1)   as eop_bal_m1,
-         sum(case when CO_12M_FLAG='Y' then 1 else 0 end) as co_12m
-  from zenon.waterfall_dtl_expd_coll_202501   /* + HRAM join */
+         sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
+  from zenon.waterfall_acct_coll_202501   /* + HRAM join */
   where COHORT_ENTRY='DPD1PLUS'
     and DLNQT_CD_M1='1' and DLNQT_CD_M2='2'   /* the 65,585 rollers */
     and cpc_M1='others'
@@ -142,9 +154,10 @@ proc sql;
          count(*)            as accounts,
          sum(w.ECL_M2)       as ecl_m2,
          mean(w.EOP_BAL_M2)  as avg_bal_m2
-  from zenon.waterfall_dtl_expd_coll_202501 w
+  from zenon.waterfall_acct_coll_202501 w
   join imprmnt_monthly i
-    on /* account key */ and i.month=202502
+    on w.EXTNL_ACCT_ID = i.EXTNL_ACCT_ID
+   and i.RPTG_PRD_MNTH_BID = 202502
   where w.COHORT_ENTRY='DPD1PLUS'
     and w.DLNQT_CD_M1='1' and w.DLNQT_CD_M2='2'
     and w.STG_CD_M1='S1'
@@ -187,8 +200,8 @@ proc sql;
          sum(ECL_M3)                               as ecl_m3,
          sum(EOP_BAL_M1)                           as eop_bal_m1,
          sum(EOP_BAL_M2)                           as eop_bal_m2,
-         sum(case when CO_12M_FLAG='Y' then 1 else 0 end) as co_12m
-  from zenon.waterfall_dtl_expd_coll_202501       /* + HRAM join, same [OPEN] source as CQ-2 */
+         sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
+  from zenon.waterfall_acct_coll_202501       /* + HRAM join, same [OPEN] source as CQ-2 */
   where COHORT_ENTRY='DPD1PLUS'
     and DLNQT_CD_M1='1'
     and cpc_M1='others'
@@ -225,10 +238,10 @@ proc sql;
          sum(w.ECL_M1)                             as ecl_m1,
          sum(w.ECL_M2)                             as ecl_m2,
          sum(w.EOP_BAL_M1)                         as eop_bal_m1,
-         sum(case when w.CO_12M_FLAG='Y' then 1 else 0 end) as co_12m
-  from zenon.waterfall_dtl_expd_coll_202501 w
+         sum(case when w.CO_12M_FLAG=1 then 1 else 0 end) as co_12m
+  from zenon.waterfall_acct_coll_202501 w
   join zenon.leak_list_202501 l                    /* the dropped id list */
-    on /* account key */
+    on w.EXTNL_ACCT_ID = l.EXTNL_ACCT_ID
   where w.COHORT_ENTRY='DPD1PLUS'
     and w.DLNQT_CD_M1='1'
     and w.cpc_M1='others'
@@ -252,13 +265,13 @@ delinquent account? If the key exists (call it `CUST_ID`, name [OPEN]):
 proc sql;
   create table zenon.cq6_customer_key as
   select count(*) as accts_sharing_customer
-  from zenon.waterfall_dtl_expd_coll_202501 w
+  from zenon.waterfall_acct_coll_202501 w
   where w.COHORT_ENTRY='DPD1PLUS'
     and w.DLNQT_CD_M1='1'
     and w.cpc_M1='others'
     and w.CHRGOFF_RSN_M1 in ('blank','PLY')
     and w.CUST_ID in (select CUST_ID
-                      from zenon.waterfall_dtl_expd_coll_202501
+                      from zenon.waterfall_acct_coll_202501
                       group by CUST_ID
                       having count(*) > 1);
 quit;
@@ -286,9 +299,9 @@ proc sql;
          sum(w.PAYMT_AMT_M2)                       as paymt_amt_m2,
          sum(case when w.PAYMT_AMT_M1 < 0 or w.PAYMT_AMT_M2 < 0
                   then 1 else 0 end)               as accts_any_payment
-  from zenon.waterfall_dtl_expd_coll_202501 w
+  from zenon.waterfall_acct_coll_202501 w
   join zenon.caller_paid30d_list l                 /* the dropped id + label list */
-    on /* account key */
+    on w.EXTNL_ACCT_ID = l.EXTNL_ACCT_ID
   where w.COHORT_ENTRY='DPD1PLUS'
     and w.DLNQT_CD_M1='1'
     and w.cpc_M1='others'
@@ -316,7 +329,7 @@ proc sql;
          sum(ECL_M2)                               as ecl_m2,
          sum(ECL_M3)                               as ecl_m3,
          sum(EOP_BAL_M1)                           as eop_bal_m1
-  from zenon.waterfall_dtl_expd_coll_202501
+  from zenon.waterfall_acct_coll_202501
   where COHORT_ENTRY='DPD1PLUS'
     and DLNQT_CD_M1='1'
     /* filters open on purpose: cpc_M1=(All), CHRGOFF_RSN_M1=(All) */
