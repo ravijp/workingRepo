@@ -21,14 +21,22 @@ Table targeting, per the build code (file 03 UPDATED version, 2026-07-10):
   `zenon.cohort_coll_202501`). `DLNQT_CD_M1='1'` already implies the DPD1PLUS
   class, so the queries filter on it alone.
 
-Three HRAM questions the results need answered alongside CQ-2/CQ-4, one line
-each: (1) which flag is the operative HRAM definition for the coverage
-carve-out, `HRAM_Flag_refit_new2` or `HRAM_FLAG_APOLLO_new6`? (2) the month
-convention: the M1 alias carries the 202412 (December) simulation, M2 carries
-202501, M3 carries 202502 — intended as HRAM-status-entering-the-month, or an
-off-by-one? (3) the HRAM joins parse the id with `BEST8.` while every other
-join uses `BEST12.` — if any EXTNL_ACCT_ID exceeds 8 characters its HRAM flags
-come back null; please check the max id length or align the informats.
+HRAM conventions, settled 2026-07-10 (Ravi): the operative flag is
+`HRAM_FLAG_APOLLO_new6` (the SQL below uses it); HRAM is produced at end of
+month, so the M1 alias correctly carries the 202412 (December) score; the HRAM
+ids are 8-wide, so the `BEST8.` informat is correct.
+
+One HRAM question the CQ-2/CQ-4 results opened (2026-07-11): 123,816 of the
+186,412 code-1 accounts (66.4%) have NO row in HRAM_SIMULATION_202412 — the
+flag comes back blank, not N. What does a missing row mean: not scored =
+non-HRAM, or a coverage/population gap in the simulation table? No HRAM share
+gets quoted until this is answered.
+
+Run-state note (2026-07-10, first combined run): CQ-1, CQ-2, CQ-4, CQ-8
+completed and produced their zenon.cq* tables — please share those four
+results. CQ-3, CQ-5, CQ-6, CQ-7 errored for the reasons now fixed in their
+sections below (CQ-3 step 1 must run first and name the DQ variable; CQ-5 and
+CQ-7 wait on Zenon's id-list drops; CQ-6 starts with a column scan).
 
 Baseline filters, same as every shared pivot (apply unless a query says
 otherwise): `DLNQT_CD_M1='1'`, `cpc_M1='others'` (ex-AA),
@@ -149,19 +157,33 @@ table's estimation used a different (late-cycle) bucket. Until this check closes
 the "stage blindness" claim stays out of the story. Direction from Anupam (07-08):
 check the impairment table's own DQ variable; balance plays no role.
 
-Step 1 — name the variable: list the columns of
-`pcds2.V_IFRS9_NON_PMA_IMPRMNT_OUTPUT` (your build pulls only
-`WGHTD_EXPTD_LOSS_AMT`, `_12MO_AMT`, `_LIFTM_AMT`, `WGHTD_STG_CD`,
-`WRITE_OFF_AMT` from it) and identify the delinquency/bucket variable the estimation used. [OPEN] its
-name; call it `IMP_DQ` below. Also note whether the view carries a cycle date.
+Step 1 — name the variable (RUN THIS FIRST; step 2 will not compile without
+it). List the view's columns and identify the delinquency/bucket variable the
+estimation used (your build pulls only `WGHTD_EXPTD_LOSS_AMT`, `_12MO_AMT`,
+`_LIFTM_AMT`, `WGHTD_STG_CD`, `WRITE_OFF_AMT`). Also note whether the view
+carries a cycle date.
 
-Step 2 — cross-tab the S1-stayers:
+```sas
+proc sql;
+  select name, type, length
+  from dictionary.columns
+  where libname='PCDS2' and memname='V_IFRS9_NON_PMA_IMPRMNT_OUTPUT';
+quit;
+```
+
+Then set the macro variable step 2 uses:
+
+```sas
+%let IMP_DQ = FILL_FROM_STEP_1;   /* the DQ/bucket column name found above */
+```
+
+Step 2 — cross-tab the S1-stayers (after step 1 only):
 
 ```sas
 proc sql;
   create table zenon.cq3_s1_stayers_dq as
   select w.STG_CD_M2,
-         i.IMP_DQ            as imp_dq_at_m2,
+         i.&IMP_DQ.          as imp_dq_at_m2,
          w.DLNQT_CD_M2,
          count(*)            as accounts,
          sum(w.ECL_M2)       as ecl_m2,
@@ -174,7 +196,7 @@ proc sql;
     and w.STG_CD_M1='S1'
     and w.cpc_M1='others'
     and w.CHRGOFF_RSN_M1 in ('blank','PLY')
-  group by w.STG_CD_M2, i.IMP_DQ, w.DLNQT_CD_M2;
+  group by w.STG_CD_M2, i.&IMP_DQ., w.DLNQT_CD_M2;
 quit;
 ```
 
@@ -237,8 +259,10 @@ about 2,394 accounts (month-end grain; intent-no-payment, pre-routing; the two
 month-end classes' b8 cells, 1,970 + 424), is the work product, and it needs its
 own ECL and balance before any value line is written.
 
-Mechanics: Zenon drops the account-id list in the shared location; data stays in
-the client environment.
+PRECONDITION: do not run until Zenon confirms the drop of
+`zenon.leak_list_202501` (account ids + a deceased flag column); running it
+before produces "file does not exist". Mechanics: Zenon drops the account-id
+list in the shared location; data stays in the client environment.
 
 ```sas
 proc sql;
@@ -265,27 +289,48 @@ side: with and without the deceased-flagged accounts.
 
 Why: IFRS 9 staging is customer-level; the Athena side has no customer id.
 
-Ask: does the waterfall table (or ASP) carry a customer identifier, and how many
-code-1 accounts (month-end, baseline filters) share a customer with another
-delinquent account? If the key exists (call it `CUST_ID`, name [OPEN]):
+Step 1 — scan for a customer-id-like column (the waterfall table has none named
+CUST_ID; the first combined run proved that, which itself half-answers the ask):
 
 ```sas
+proc sql;
+  select libname, memname, name
+  from dictionary.columns
+  where ((libname='PCDS'  and memname='V_ASP_EOM_ACCT_SUM')
+      or (libname='PCDS2' and memname='V_IFRS9_NON_PMA_IMPRMNT_OUTPUT'))
+    and (upcase(name) like '%CUST%' or upcase(name) like '%PARTY%'
+      or upcase(name) like '%HSHLD%' or upcase(name) like '%HOUSEHOLD%');
+quit;
+```
+
+Step 2 — only if step 1 finds a key (fill its name):
+
+```sas
+%let CUST_ID = FILL_FROM_STEP_1;
+
 proc sql;
   create table zenon.cq6_customer_key as
   select count(*) as accts_sharing_customer
   from zenon.waterfall_acct_coll_v1_202501 w
+  join pcds.V_ASP_EOM_ACCT_SUM k
+    on w.EXTNL_ACCT_ID = k.EXTNL_ACCT_ID and k.RPTG_PRD_MNTH_BID = 202501
   where w.DLNQT_CD_M1='1'
     and w.cpc_M1='others'
     and w.CHRGOFF_RSN_M1 in ('blank','PLY')
-    and w.CUST_ID in (select CUST_ID
-                      from zenon.waterfall_acct_coll_v1_202501
-                      group by CUST_ID
-                      having count(*) > 1);
+    and k.&CUST_ID. in (select &CUST_ID.
+                        from pcds.V_ASP_EOM_ACCT_SUM
+                        where RPTG_PRD_MNTH_BID = 202501
+                          and DLNQT_CD is not null and DLNQT_CD ne '0'
+                        group by &CUST_ID.
+                        having count(*) > 1);
 quit;
 ```
 
-Return: yes/no on the key, and the one count. Decides whether the work list needs
-customer-grain dedup and bounds the customer-level-staging disclosure.
+Return: step 1's hits (or "none", which is itself the answer: no customer key in
+ASP), and the one count if step 2 runs. Decides whether the work list needs
+customer-grain dedup and bounds the customer-level-staging disclosure. Side
+note: on the Athena side, `contactcenter_bdp_db.call` carries a PartyID per the
+table inventory; if ASP has no key, that is the fallback lead for callers.
 
 ## CQ-7 — true-payment check of the paid-30d gate
 
@@ -293,6 +338,8 @@ Why: every capture/leak label on the Athena side rests on a last-payment-date
 proxy with autopay and bounced exclusions. PAYMT_AMT (negative = payment) is the
 true payment record and can validate the gate itself.
 
+PRECONDITION: do not run until Zenon confirms the drop of
+`zenon.caller_paid30d_list`; running it before produces "file does not exist".
 Mechanics: Zenon drops the caller account-id list, each account carrying its
 Athena paid-30d label (captured / leaked), in the shared location; data stays in
 the client environment.
