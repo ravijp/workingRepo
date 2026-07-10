@@ -10,22 +10,25 @@ over verbatim. CQ-1 to CQ-3 are the original pack (revised 2026-07-10 against th
 code); CQ-4 to CQ-8 were appended 2026-07-10 from the cohort-picture arbitration
 ([uc2-jan2025-cohort-picture.md](uc2-jan2025-cohort-picture.md)).
 
-Table targeting, per the build code:
+Table targeting, per the build code (file 03 UPDATED version, 2026-07-10):
 
-- CQ-2 to CQ-8 run on **`zenon.waterfall_acct_coll_v1_202501`** (file 02's
-  account-wide pivot; it exists and has every column they use).
-- CQ-1 needs the call-type columns, which only file 03 adds. File 03 as shared
-  has a stray semicolon at line 6 (`... _v1_&vintage_mth wf;` before the
-  `left join`), which ends the create before the join: the resulting
-  `zenon.waterfall_acct_coll_202501`, if it exists, has NO call_type columns.
-  Fix the semicolon, rebuild `work.call_accts_jan_mar_25` (WORK is
-  session-scoped), re-run file 03, then run CQ-1.
+- CQ-1, CQ-2, CQ-4 run on **`zenon.waterfall_coll_call_202501`** (file 03's
+  output: `_v1_` columns plus call_type_CLBCK/INB/TRSFR, the six HRAM flags
+  hram_flag_refit_M1..M3 / hram_flag_apollo_M1..M3, and CPC_FLAG_NW).
+- CQ-3, CQ-5 to CQ-8 run on **`zenon.waterfall_acct_coll_v1_202501`** (file
+  02's account-wide pivot); they use no call or HRAM fields.
 - The wide tables carry **no COHORT_ENTRY column** (the flag lives only on
   `zenon.cohort_coll_202501`). `DLNQT_CD_M1='1'` already implies the DPD1PLUS
   class, so the queries filter on it alone.
-- The 07-08 pivot tab showed `WATERFALL_DTL_EXPD_COLL_202501`, which is not in
-  the shared code; if that is your current table and its columns match `_v1_`
-  plus call types, substitute it and say so.
+
+Three HRAM questions the results need answered alongside CQ-2/CQ-4, one line
+each: (1) which flag is the operative HRAM definition for the coverage
+carve-out, `HRAM_Flag_refit_new2` or `HRAM_FLAG_APOLLO_new6`? (2) the month
+convention: the M1 alias carries the 202412 (December) simulation, M2 carries
+202501, M3 carries 202502 — intended as HRAM-status-entering-the-month, or an
+off-by-one? (3) the HRAM joins parse the id with `BEST8.` while every other
+join uses `BEST12.` — if any EXTNL_ACCT_ID exceeds 8 characters its HRAM flags
+come back null; please check the max id length or align the informats.
 
 Baseline filters, same as every shared pivot (apply unless a query says
 otherwise): `DLNQT_CD_M1='1'`, `cpc_M1='others'` (ex-AA),
@@ -57,7 +60,7 @@ proc sql;
          sum(EOP_BAL_M1)                           as eop_bal_m1,
          sum(EOP_BAL_M2)                           as eop_bal_m2,
          sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
-  from zenon.waterfall_acct_coll_202501   /* the call-typed table; see the file-03 fix note in the header */
+  from zenon.waterfall_coll_call_202501   /* file 03 (updated) output: call types + HRAM flags */
   where DLNQT_CD_M1='1'
     and cpc_M1='others'
     and CHRGOFF_RSN_M1 in ('blank','PLY')
@@ -105,15 +108,15 @@ roll price, but it blends HRAM and non-HRAM accounts. An HRAM account is stage 2
 before it rolls, so its 1→2 move carries no coverage step. Namit and Anupam agreed
 this is the next cut (07-08). Without it we will not quote a prevented-roll dollar.
 
-The HRAM flag is not in the waterfall table as transcribed. [OPEN] its source:
-HRAM capture is keyed on the Apollo PD model (Anupam 07-08) — Anupam can point to
-the table/field that marks HRAM capture per account-month. Once joined (call it
-`HRAM_M1`, HRAM-captured as of January):
+HRAM source found in file 03 (updated): `zenon.HRAM_SIMULATION_*` joined as
+hram_flag_refit_M1..M3 / hram_flag_apollo_M1..M3. The SQL below uses the Apollo
+flag; if refit_new2 is the operative definition, swap it (and answer the three
+HRAM questions in the header).
 
 ```sas
 proc sql;
   create table zenon.cq2_hram_roll_split as
-  select HRAM_M1,
+  select hram_flag_apollo_M1,
          STG_CD_M1,
          count(*)          as accounts,
          sum(ECL_M1)       as ecl_m1,
@@ -121,11 +124,11 @@ proc sql;
          sum(ECL_M3)       as ecl_m3,
          sum(EOP_BAL_M1)   as eop_bal_m1,
          sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
-  from zenon.waterfall_acct_coll_v1_202501   /* + HRAM join */
+  from zenon.waterfall_coll_call_202501
   where DLNQT_CD_M1='1' and DLNQT_CD_M2='2'   /* the 65,585 rollers */
     and cpc_M1='others'
     and CHRGOFF_RSN_M1 in ('blank','PLY')
-  group by HRAM_M1, STG_CD_M1;
+  group by hram_flag_apollo_M1, STG_CD_M1;
 quit;
 ```
 
@@ -193,15 +196,14 @@ breakdown).
 Why: extends CQ-2 from the rollers to all transitions. Your pivot's M2 rows sum to
 105,715 + 15,002 + 65,585 = 186,302 of 186,412 (account grain, month-end); this
 grid prices the cure row's deferred release, the stay row, and the exit row, and
-names the 110-account remainder. HRAM_M1 as in CQ-2: the flag is not in the
-waterfall table as transcribed, source [OPEN] (HRAM capture is keyed on the Apollo
-PD model, Anupam 07-08).
+names the 110-account remainder. HRAM flag as in CQ-2: the Apollo variant from
+file 03 (updated); swap to refit_new2 if that is the operative definition.
 
 ```sas
 proc sql;
   create table zenon.cq4_ledger_priced_m2 as
   select DLNQT_CD_M2,   /* every value, missing included: the missing rows name the 110 */
-         HRAM_M1,
+         hram_flag_apollo_M1,
          count(*)                                  as accounts,
          sum(ECL_M1)                               as ecl_m1,
          sum(ECL_M2)                               as ecl_m2,
@@ -209,12 +211,12 @@ proc sql;
          sum(EOP_BAL_M1)                           as eop_bal_m1,
          sum(EOP_BAL_M2)                           as eop_bal_m2,
          sum(case when CO_12M_FLAG=1 then 1 else 0 end) as co_12m
-  from zenon.waterfall_acct_coll_v1_202501       /* + HRAM join, same [OPEN] source as CQ-2 */
+  from zenon.waterfall_coll_call_202501
   where DLNQT_CD_M1='1'
     and cpc_M1='others'
     and CHRGOFF_RSN_M1 in ('blank','PLY')
-  group by DLNQT_CD_M2, HRAM_M1
-  order by DLNQT_CD_M2, HRAM_M1;
+  group by DLNQT_CD_M2, hram_flag_apollo_M1
+  order by DLNQT_CD_M2, hram_flag_apollo_M1;
 quit;
 ```
 
