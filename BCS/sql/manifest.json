@@ -1690,11 +1690,30 @@
       "question": "For ledger accounts with BOTH a paid-30d and a no-pay-30d January intent episode, how do the two episode outcomes distribute over the account's Feb-EOM position - the cohort-native x4 guard?",
       "render": "table",
       "story": "core",
+      "superseded_by": "b16_v2_within_cohort_contrast",
+      "note": "Superseded: scoring every January episode against the account's one Feb-EOM position made both outcome rows identical, and the transcript+intent gate on the paid side shrank the population below the 217-account floor.",
       "columns": [
         "b16_episode_outcome",
         "b16_feb_position",
         "b16_episodes",
         "b16_accounts"
+      ]
+    },
+    {
+      "id": "b16_v2_within_cohort_contrast",
+      "tier": 11,
+      "file": "tier11/b16_v2_within_cohort_contrast.sql",
+      "title": "Within-cohort contrast v2: episode-scored paid vs no-pay, ledger accounts, Jan-Mar",
+      "question": "For ledger accounts with BOTH a paid-30d and a no-pay-30d episode across January-March 2025, does the month after a paid episode look better than the month after a no-pay episode for the same accounts - x4's outcome logic run cohort-natively?",
+      "render": "table",
+      "story": "core",
+      "columns": [
+        "b16v2_episode_group",
+        "b16v2_episodes",
+        "b16v2_accounts",
+        "b16v2_pct_current_next_month",
+        "b16v2_pct_same_bucket_next_month",
+        "b16v2_pct_deeper_next_month"
       ]
     },
     {
