@@ -2,7 +2,7 @@ Four blocks, in priority order. Each is aggregates-only and runs on what already
 
 A — CQ-3 rerun with the stage-2 reason code (names why 16,597 same-count accounts are S2 while 10,898 stay S1; likely settles the S1-stayer story and cross-checks the blank-HRAM question):
 
-
+```
 proc sql;
   create table zenon.cq3_s1_stayers_rsn as
   select w.STG_CD_M2,
@@ -21,9 +21,10 @@ proc sql;
     and w.CHRGOFF_RSN_M1 in ('blank','PLY')
   group by w.STG_CD_M2, i.WGHTD_STG2_RSN_CD, i.CYCL_DLNQT_CNT;
 quit;
+```
 B — the code-vs-count mapping probe (this can decide the A-068 reading from data, without waiting on a definition: cross-tab ASP's code against the impairment count for the whole cohort in the same month. If code k lines up cleanly with count k−1 everywhere, it's a convention offset and the estimation saw the roll; if the mass is shifted or mixed, it's a lag):
 
-
+```
 proc sql;
   create table zenon.cq9_code_count_map as
   select w.DLNQT_CD_M1,
@@ -37,16 +38,18 @@ proc sql;
   group by w.DLNQT_CD_M1, i.CYCL_DLNQT_CNT
   order by w.DLNQT_CD_M1, i.CYCL_DLNQT_CNT;
 quit;
+```
 (Deliberately no cpc/reason filters — the mapping is definitional, so wider is better. Expect roughly 7 codes × a few counts.)
 
 C — the ASP schema scan (finishes CQ-6: look for any CUST/PARTY/HSHLD column; also gives us the full ASP variable list for the code dictionary work):
 
-
+```
 proc contents data=pcds.V_ASP_EOM_ACCT_SUM varnum;
 run;
+```
 D — optional, one cheap closure: the full charge-off reason-code list (an [OPEN] since the waterfall record — the live workbook showed more codes than the screenshot):
 
-
+```
 proc sql;
   select CHRGOFF_STATUS_RSN_CD, count(*) as rows
   from pcds.V_ASP_EOM_ACCT_SUM
@@ -54,4 +57,47 @@ proc sql;
     and CHRGOFF_STATUS_RSN_CD is not null
   group by CHRGOFF_STATUS_RSN_CD;
 quit;
+```
 Share whatever lands, in any order — A and B are the ones that move the A-068 verdict and the gated cure-row/unit-value reads.
+
+---
+
+```
+proc sql;
+  create table zenon.cq5_leak_list_priced as
+  select l.DECEASED_FLAG,
+         count(*) as accounts_joined,
+         sum(w.ECL_M1) as ecl_m1,
+         sum(w.ECL_M2) as ecl_m2,
+         sum(w.EOP_BAL_M1) as eop_bal_m1,
+         sum(case when w.CO_12M_FLAG=1 then 1 else 0 end) as co_12m
+  from zenon.waterfall_acct_coll_v1_202501 w
+  join WORK.e1_leak_list_202501 l
+    on input(w.EXTNL_ACCT_ID, BEST12.) = l.EXTNL_ACCT_ID
+  where w.DLNQT_CD_M1='1'
+    and w.cpc_M1='others'
+    and w.CHRGOFF_RSN_M1 in ('blank','PLY')
+  group by l.DECEASED_FLAG;
+  select * from zenon.cq5_leak_list_priced;
+quit;
+```
+
+```
+proc sql;
+  create table zenon.cq7_paid30d_check as
+  select l.PAID_30D_LABEL,
+         count(*) as accounts,
+         sum(w.PAYMT_AMT_M1) as paymt_amt_m1,
+         sum(w.PAYMT_AMT_M2) as paymt_amt_m2,
+         sum(case when w.PAYMT_AMT_M1 < 0 or w.PAYMT_AMT_M2 < 0
+                  then 1 else 0 end) as accts_any_payment
+  from zenon.waterfall_acct_coll_v1_202501 w
+  join WORK.e2_caller_paid30d_list l
+    on input(w.EXTNL_ACCT_ID, BEST12.) = l.EXTNL_ACCT_ID
+  where w.DLNQT_CD_M1='1'
+    and w.cpc_M1='others'
+    and w.CHRGOFF_RSN_M1 in ('blank','PLY')
+  group by l.PAID_30D_LABEL;
+  select * from zenon.cq7_paid30d_check;
+quit;
+```
