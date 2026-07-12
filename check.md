@@ -101,3 +101,52 @@ proc sql;
   select * from zenon.cq7_paid30d_check;
 quit;
 ```
+
+
+---
+```
+WITH snap AS (
+    SELECT extnl_acct_id,
+           eff_dt,
+           CASE
+             WHEN past_due_271_up_amt  > 0 THEN 10
+             WHEN past_due_241_270_amt > 0 THEN 9
+             WHEN past_due_211_240_amt > 0 THEN 8
+             WHEN past_due_181_210_amt > 0 THEN 7
+             WHEN past_due_151_180_amt > 0 THEN 6
+             WHEN past_due_121_150_amt > 0 THEN 5
+             WHEN past_due_91_120_amt  > 0 THEN 4
+             WHEN past_due_61_90_amt   > 0 THEN 3
+             WHEN past_due_31_60_amt   > 0 THEN 2
+             WHEN past_due_1_30_amt    > 0 THEN 1
+             ELSE 0
+           END AS bucket,
+           try_cast(acct_bal_amt AS double) AS bal,
+           try_cast(chrgoff_dt AS date) AS co_dt,
+           clnt_prdct_cd
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20250101' AND eff_dt < '20250201'
+),
+monthly AS (
+    SELECT extnl_acct_id,
+           max_by(bucket, eff_dt) AS eom_bucket,
+           max_by(bal, eff_dt) AS eom_bal,
+           min(co_dt) AS co_dt,
+           max_by(clnt_prdct_cd, eff_dt) AS eom_cpc
+    FROM snap GROUP BY 1
+)
+SELECT CASE
+         WHEN eom_cpc IN ('AA2','BC5','BA5','AA1','AC1','AM1','AC2',
+                          'AM2','AA3','AC3','AM3','AA4','AC4','AM4') THEN 'a. AA'
+         WHEN eom_cpc IN ('BGC','BGM','CGM','GMR')                  THEN 'b. GM'
+         WHEN eom_cpc IN ('FBS','IBS','U1C','U2C','U3C')            THEN 'c. Bronco'
+         ELSE 'd. others'
+       END AS pc_class,
+       count(*) AS pc_accounts,
+       round(sum(eom_bal), 0) AS pc_jan_eom_balance
+FROM monthly
+WHERE eom_bucket = 1
+  AND (co_dt IS NULL OR co_dt >= DATE '2025-01-01')
+GROUP BY 1 ORDER BY 1
+```
