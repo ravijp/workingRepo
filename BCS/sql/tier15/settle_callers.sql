@@ -1,67 +1,60 @@
--- Tier 15 | NEW DIAGNOSTIC PAIR (drafted 2026-07-13; keeper-corrected same
--- day): isolates two candidate causes of the 9,389 (Athena, January, ex-AA
--- ledger callers) vs 11,154 (SAS caller flag on the 186,412 slice)
--- difference: the BUSINESS_CARD product-type exclusion, and the Jan-only vs
--- Jan-Mar call window.
+-- Tier 15 | CALLER-GAP DIAGNOSTIC LADDER (rewritten 2026-07-13 after the
+-- export code behind zenon.aws_call_accts_jan_mar_25 surfaced).
+-- SETTLED: that export filters call_month='M1' before saving, so the SAS
+-- caller flag is JANUARY-ONLY (the table name is misleading). The earlier
+-- Jan-vs-Jan-Mar window explanation of 11,154 vs 9,389 is dead; the
+-- remaining candidate causes are (1) the export includes business-card
+-- call rows (ours excludes), (2) the export has no effdt load-date cap
+-- (ours drops rows arriving after 2025-02-02), (3) the cycle-code vs
+-- amount-bucket population boundary between his slice and our ledger.
+-- This ladder sizes (1) and (2) at book level; the residual is (3).
 --
--- IMPORTANT SCOPE NOTE (keeper correction): these two statements count
--- distinct calling accounts over the WHOLE call table, NOT joined to the
--- bucket-1 ledger. Their outputs are book-level caller counts (expected in
--- the hundreds of thousands) and are NOT directly comparable to 9,389 or
--- 11,154. They isolate the DIRECTION and RELATIVE SIZE of each effect:
---   (A) vs the same statement with the exclusion re-added = the
---       business-card share of January inbound callers;
---   (B) vs (A-with-exclusion) = the multiplier from widening one month to
---       three, at book level.
--- The population-joined settle that directly tests the flag-builder's
--- January-only claim runs on the SAS side, one line, per the CQ-11 note
--- ("call_month='01' gives a January-only rerun"):
+-- Run in order. All three are single scans of contactcenter_bdp_db.call,
+-- January "date" window. NOTE ON COST: statement C intentionally has NO
+-- effdt filter (replicating the export), so it scans without partition
+-- pruning, as the original export did.
 --
---   /* SAS, not Athena: */
---   -- proc sql;
---   --   select count(distinct wf.extnl_acct_id) as jan_only_inb_flagged
---   --   from zenon.waterfall_acct_coll_v1_202501 wf
---   --   where wf.DLNQT_CD_M1='1' and wf.cpc_M1='others'
---   --     and wf.CHRGOFF_RSN_M1 in ('blank','PLY')
---   --     and input(wf.extnl_acct_id, BEST12.) in
---   --         (select extnl_acct_id from zenon.aws_call_accts_jan_mar_25
---   --           where call_month='01' and initiationmethod='INBOUND');
---   -- quit;
---
---   Expected: if the January-only count lands near 9,389 (same order,
---   allowing the slice-vs-ex-AA population difference and the unshared
---   business-card handling), the flag as run (11,154) was Jan-Mar and the
---   walkthrough's reading stands; if it stays near 11,154, the import
---   table itself is January-only despite its name and grain, and the
---   record needs a correction.
---
--- PLAUSIBILITY BOUNDS: (A) and (B) are book-level counts, far above
--- 11,154; (B) > (A-with-exclusion) by construction (wider window);
--- (A) >= the same January statement with the exclusion re-added.
--- RESOURCE DISCIPLINE: each statement is a single scan over
--- contactcenter_bdp_db.call filtered to its own date window, matching the
--- scan shape of b14_exaa's `inb` CTE exactly (no join, no window
--- function); nothing here touches fmt_acct_c.
+-- PRE-REGISTERED EXPECTATIONS:
+--   C  (replicates the export logic)  ~= 831,261 distinct inbound accounts
+--      (the export pivot's own INBOUND count; small drift only, from
+--      empty-string id handling). Far off = our call-table read and the
+--      export disagree at base level: STOP, route to the keeper.
+--   B2 (C + the effdt cap)            <= C; C - B2 = late-arriving rows.
+--   A  (B2 + business-card exclusion) <= B2; B2 - A = business-card share.
+--   These are BOOK-LEVEL counts (hundreds of thousands), not comparable
+--   to 9,389 / 11,154 directly; the two deltas transfer proportionally to
+--   the ledger-level gap, and what they do not explain is the population
+--   boundary (3).
 
 -- ============================================================
--- (A) January-window inbound distinct accounts, WITHOUT the
--- BUSINESS_CARD exclusion (same "date"/effdt window as b14_exaa's inb,
--- exclusion clause removed).
+-- (C) Replicate the SAS-side export logic exactly: January calls,
+-- id present, no producttype exclusion, no effdt cap.
+-- ============================================================
+SELECT count(DISTINCT trim(cast(acctid AS varchar))) AS settle_c_accounts
+FROM "contactcenter_bdp_db"."call"
+WHERE initiationmethod = 'INBOUND'
+  AND "date" >= DATE '2025-01-01' AND "date" <= DATE '2025-01-31'
+  AND acctid IS NOT NULL;
+
+-- ============================================================
+-- (B2) Same as C, plus our effdt load-date cap (isolates the
+-- late-arriving-row effect).
+-- ============================================================
+SELECT count(DISTINCT trim(cast(acctid AS varchar))) AS settle_b2_accounts
+FROM "contactcenter_bdp_db"."call"
+WHERE initiationmethod = 'INBOUND'
+  AND "date" >= DATE '2025-01-01' AND "date" <= DATE '2025-01-31'
+  AND acctid IS NOT NULL
+  AND effdt >= '2025-01-01' AND effdt < '2025-02-02';
+
+-- ============================================================
+-- (A) Same as B2, plus our business-card exclusion (isolates the
+-- business-card share; this is our standard inb filter set).
 -- ============================================================
 SELECT count(DISTINCT trim(cast(acctid AS varchar))) AS settle_a_accounts
 FROM "contactcenter_bdp_db"."call"
 WHERE initiationmethod = 'INBOUND'
-  AND "date" >= DATE '2025-01-01' AND "date" < DATE '2025-02-01'
-  AND effdt >= '2025-01-01' AND effdt < '2025-02-02';
-
--- ============================================================
--- (B) Jan-Mar-window inbound distinct accounts, WITH the BUSINESS_CARD
--- exclusion (same exclusion clause as b14_exaa's inb, window widened to
--- "date" < 2025-04-01 / effdt < 2025-04-02).
--- ============================================================
-SELECT count(DISTINCT trim(cast(acctid AS varchar))) AS settle_b_accounts
-FROM "contactcenter_bdp_db"."call"
-WHERE initiationmethod = 'INBOUND'
-  AND "date" >= DATE '2025-01-01' AND "date" < DATE '2025-04-01'
-  AND effdt >= '2025-01-01' AND effdt < '2025-04-02'
+  AND "date" >= DATE '2025-01-01' AND "date" <= DATE '2025-01-31'
+  AND acctid IS NOT NULL
+  AND effdt >= '2025-01-01' AND effdt < '2025-02-02'
   AND coalesce(cast(producttype AS varchar), '') <> 'BUSINESS_CARD';
