@@ -44,7 +44,8 @@ WITH snap AS (
            try_cast(chrgoff_dt AS date) AS co_dt,
            coalesce(try_cast(paymt_last_dt AS date),
                     try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
-           clnt_prdct_cd
+           clnt_prdct_cd,
+           eff_dt
     FROM "fmt_acct_dba"."fmt_acct_c"
     WHERE sfx_nbr = 0
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-07-01'
