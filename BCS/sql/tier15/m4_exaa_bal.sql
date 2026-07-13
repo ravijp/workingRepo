@@ -1,52 +1,60 @@
 -- Tier 15 | ADDITIVE VARIANT of m4_exaa.sql, drafted 2026-07-13; logic
 -- unchanged, columns appended.
--- PRE-REGISTERED TIE-OUT (STOP RULE): m4_episodes across ALL language-group
--- rows sums to 11,262 EXACTLY on re-run. Any mismatch = STOP, route to the
--- keeper before trusting the new columns below.
+-- RE-ANCHORED CO WINDOWS (per Ravi, 2026-07-13): all forward charge-off
+-- windows now anchor at 2025-01-31, not 2025-01-01. The co_8m / co_10m /
+-- co_12m flags in ep2 use:
+--   CO8  : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-09-30'
+--   CO10 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-11-30'
+--   CO12 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2026-01-31'
+-- CO-COUNT TIE-OUTS ARE RE-BASELINED: the recorded m4 group CO counts were
+-- computed on the OLD 2025-01-01 anchor. They WILL NOT reproduce exactly on
+-- this anchor. Expect close to the old values but not equal. These are NOTES,
+-- not STOP rules.
+-- SURVIVING HARD STOP (does not depend on the CO window): m4_episodes across
+-- ALL language-group rows sums to 11,262 EXACTLY on re-run. Any mismatch =
+-- STOP, route to the keeper before trusting the new columns below.
 -- ADDITION: the original snap/monthly CTEs did not carry acct_bal_amt or
 -- chrgoff_amt (m4 had no balance column at all). One more expression is
--- added to the existing January-window snap SELECT (bal, co_amt) and
--- threaded through the existing GROUP BY in monthly (max_by(bal, eff_dt)
--- AS eom_bal, matching b14's eom_bal derivation exactly, over the SAME
--- 2024-12-01/2025-02-01 scan already in place) and into base/ledger. NO
--- NEW SCAN is added. chrgoff_amt is threaded the same way as a per-account
--- eom_co_amt = max_by(try_cast(chrgoff_amt AS double), eff_dt) inside the
--- same January monthly aggregation (this is the account's own charge-off
--- amount if it charged off within the Jan snapshot window; for the
--- forward CO8/CO12 flags, which are driven off future_co's forward scan,
--- the amount is threaded from future_co the same way as b15/b14: a paired
--- min_by(chrgoff_amt, chrgoff_dt) added to that CTE's SELECT).
+-- added to the existing January-window snap SELECT (bal) and threaded through
+-- the existing GROUP BY in monthly (max_by(bal, eff_dt) AS eom_bal, matching
+-- b14's eom_bal derivation exactly, over the SAME 2024-12-01/2025-02-01 scan
+-- already in place) and into base/ledger. NO NEW SCAN is added. For the
+-- forward CO8/CO10/CO12 dollars, driven off future_co's forward scan, the
+-- amount is threaded from future_co the same way as b15/b14: a paired
+-- min_by(chrgoff_amt, chrgoff_dt) FILTER (WHERE chrgoff_dt IS NOT NULL) added
+-- to that CTE's SELECT.
 -- DEDUP NOTE: m4_accounts is COUNT(DISTINCT acct_key) per language_group,
 -- i.e. one account can appear in multiple episodes within a group but is
--- counted once. m4_jan_eom_balance is computed at the SAME account-dedup
--- level: it sums l.eom_bal once per DISTINCT acct_key within the group
--- (via the ledger_bal subquery keyed on acct_key, joined back after
--- dedup), not once per episode row, so it will NOT double count an
--- account with 2+ episodes in the group. This required two new CTEs
--- (acct_group, acct_bal, acct_bal_grp) that sit alongside ep2 rather than
--- inside it: acct_group dedups ep2 down to one row per (language_group,
--- acct_key); acct_bal joins that to ledger.eom_bal and future_co.co_amt;
--- acct_bal_grp aggregates to one row per group; the final SELECT joins
--- that back onto the untouched ep2-grain query. No existing CTE's SELECT
--- list, join, or WHERE clause is edited - this is the one deviation from
--- "same CTEs only" the spec allows for ("if account dedup ... makes a
--- clean per-group balance impossible without restructuring, say so and
--- compute at the same account-dedup level as m4_accounts") - done here.
--- New final-SELECT columns, appended at the end: m4_jan_eom_balance (sum
--- of eom_bal, one row per distinct account in the group), m4_co8_amt,
--- m4_co12_amt (sum of the future-charge-off amount for accounts flagged
--- co_8m / co_12m respectively, deduped the same way), m4_jan_bal_co8,
--- m4_jan_bal_co12 (Jan EOM balance restricted to those same two flag
--- sets, same dedup).
--- PLAUSIBILITY BOUNDS: all four amount/balance sums >= 0; m4_co12_amt >=
--- m4_co8_amt and m4_jan_bal_co12 >= m4_jan_bal_co8 per group (CO12 window
--- is a superset of CO8); m4_jan_bal_co8/co12 <= m4_jan_eom_balance per
--- group; m4_co8_amt/co12_amt are on the same dollar scale as
--- m4_jan_bal_co8/co12 for the same accounts (order-of-magnitude check).
--- RESOURCE DISCIPLINE: no new base-table scans; snap/monthly/future_co
--- reuse the exact WHERE clauses already in place; the only change to
--- scan cost is one extra max_by expression evaluated per group in each
--- existing aggregation.
+-- counted once. m4_jan_eom_balance and every coN_amt / jan_bal_coN sum are
+-- computed at the SAME account-dedup level: they sum each account's Jan EOM
+-- balance / forward CO amount ONCE per DISTINCT acct_key within the group,
+-- not once per episode row, so an account with 2+ episodes in a group is
+-- never double counted. This required three CTEs (acct_group, acct_bal,
+-- acct_bal_grp) that sit alongside ep2 rather than inside it: acct_group
+-- dedups ep2 down to one row per (language_group, acct_key) and rolls the
+-- co_8m / co_10m / co_12m flags up with bool_or; acct_bal joins that to
+-- ledger.eom_bal and future_co.co_amt; acct_bal_grp aggregates to one row
+-- per group; the final SELECT joins that back onto the untouched ep2-grain
+-- query. No existing CTE's SELECT list, join, or WHERE clause is edited (aside
+-- from the two additive expressions above) - this is the one deviation from
+-- "same CTEs only" the spec allows for episode-grain files, done here.
+-- New final-SELECT columns, appended at the end:
+--   m4_co_10m_accounts  = distinct accounts flagged co_10m (count),
+--   m4_jan_eom_balance  = sum of eom_bal, one row per distinct account/group,
+--   m4_co8_amt / m4_co10_amt / m4_co12_amt = sum of forward CO amount for
+--       accounts flagged co_8m / co_10m / co_12m, deduped the same way,
+--   m4_jan_bal_co8 / m4_jan_bal_co10 / m4_jan_bal_co12 = Jan EOM balance
+--       restricted to those same three flag sets, same dedup.
+-- PLAUSIBILITY BOUNDS (state only, not tie-outs): all balance/CO-dollar sums
+-- >= 0; per group m4_co12_amt >= m4_co10_amt >= m4_co8_amt, and likewise for
+-- m4_jan_bal_co12 >= m4_jan_bal_co10 >= m4_jan_bal_co8 and for the _co_Nm
+-- counts (the CO12 window contains CO10 contains CO8); m4_jan_bal_coN <=
+-- m4_jan_eom_balance per group; each coN_amt is on the same dollar scale as
+-- the balance on those accounts (charge-off amount ~ balance scale, not equal).
+-- RESOURCE DISCIPLINE: no new base-table scans; snap/monthly/future_co reuse
+-- the exact WHERE clauses already in place; the only change to scan cost is
+-- the extra max_by / min_by expressions evaluated per group in aggregations
+-- already running.
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -102,8 +110,11 @@ ledger AS (
 future_co AS (
     SELECT extnl_acct_id,
            min(try_cast(chrgoff_dt AS date)) AS co_dt_future,
-           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date))
-             FILTER (WHERE chrgoff_dt IS NOT NULL) AS co_amt
+           -- co_amt = the charge-off amount on the row with the earliest
+           -- charge-off date. The CTE's WHERE already restricts to
+           -- chrgoff_dt IS NOT NULL, so no FILTER clause is needed (kept out
+           -- to avoid a syntax path not exercised by the verified tier-14 kit).
+           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date)) AS co_amt
     FROM "fmt_acct_dba"."fmt_acct_c"
     WHERE sfx_nbr = 0
       AND eff_dt >= '20250101' AND eff_dt < '20260101'
@@ -235,10 +246,12 @@ ep2 AS (
              WHEN coalesce(x.dispute_n, 0) > 0 THEN 'f. dispute or fraud talk'
              ELSE 'g. no payment-related language'
            END AS language_group,
-           (f.co_dt_future >= DATE '2025-01-01'
-            AND f.co_dt_future < DATE '2025-09-01') AS co_8m,
-           (f.co_dt_future >= DATE '2025-01-01'
-            AND f.co_dt_future < DATE '2026-01-01') AS co_12m,
+           (f.co_dt_future >= DATE '2025-01-31'
+            AND f.co_dt_future < DATE '2025-09-30') AS co_8m,
+           (f.co_dt_future >= DATE '2025-01-31'
+            AND f.co_dt_future < DATE '2025-11-30') AS co_10m,
+           (f.co_dt_future >= DATE '2025-01-31'
+            AND f.co_dt_future < DATE '2026-01-31') AS co_12m,
            (k.any_captured = 0 AND k.any_leaked_intent = 1) AS leaked_intent_acct
     FROM ep e
     LEFT JOIN tx x ON e.contactid = x.contactid
@@ -249,16 +262,20 @@ ep2 AS (
 -- account-level dedup (same grain as m4_accounts = COUNT(DISTINCT acct_key)
 -- per language_group): one row per (language_group, acct_key), carrying the
 -- account's Jan EOM balance and forward charge-off amount/flags, so the
--- final SUM cannot double count an account with multiple episodes.
+-- final SUM cannot double count an account with multiple episodes. The
+-- co_8m / co_10m / co_12m flags are rolled up with bool_or so an account is
+-- in a window if any of its episodes saw the forward charge-off in range.
 acct_group AS (
     SELECT language_group, acct_key,
-           bool_or(co_8m) AS acct_co_8m,
+           bool_or(co_8m)  AS acct_co_8m,
+           bool_or(co_10m) AS acct_co_10m,
            bool_or(co_12m) AS acct_co_12m
     FROM ep2
     GROUP BY 1, 2
 ),
 acct_bal AS (
-    SELECT ag.language_group, ag.acct_key, ag.acct_co_8m, ag.acct_co_12m,
+    SELECT ag.language_group, ag.acct_key,
+           ag.acct_co_8m, ag.acct_co_10m, ag.acct_co_12m,
            l.eom_bal, f.co_amt
     FROM acct_group ag
     JOIN ledger l ON l.acct_key = ag.acct_key
@@ -268,9 +285,11 @@ acct_bal AS (
 acct_bal_grp AS (
     SELECT language_group,
            round(sum(eom_bal), 0) AS m4_jan_eom_balance,
-           round(sum(CASE WHEN acct_co_8m THEN co_amt END), 0) AS m4_co8_amt,
+           round(sum(CASE WHEN acct_co_8m  THEN co_amt END), 0) AS m4_co8_amt,
+           round(sum(CASE WHEN acct_co_10m THEN co_amt END), 0) AS m4_co10_amt,
            round(sum(CASE WHEN acct_co_12m THEN co_amt END), 0) AS m4_co12_amt,
-           round(sum(CASE WHEN acct_co_8m THEN eom_bal END), 0) AS m4_jan_bal_co8,
+           round(sum(CASE WHEN acct_co_8m  THEN eom_bal END), 0) AS m4_jan_bal_co8,
+           round(sum(CASE WHEN acct_co_10m THEN eom_bal END), 0) AS m4_jan_bal_co10,
            round(sum(CASE WHEN acct_co_12m THEN eom_bal END), 0) AS m4_jan_bal_co12
     FROM acct_bal
     GROUP BY 1
@@ -280,14 +299,17 @@ SELECT e.language_group AS m4_group,
        count(DISTINCT e.acct_key) AS m4_accounts,
        round(100.0 * sum(e.captured) / count(*), 1) AS m4_pct_paid_30d,
        count(DISTINCT CASE WHEN coalesce(e.co_8m, false) THEN e.acct_key END) AS m4_co_8m_accounts,
+       count(DISTINCT CASE WHEN coalesce(e.co_10m, false) THEN e.acct_key END) AS m4_co_10m_accounts,
        count(DISTINCT CASE WHEN coalesce(e.co_12m, false) THEN e.acct_key END) AS m4_co_12m_accounts,
        count(DISTINCT CASE WHEN coalesce(e.leaked_intent_acct, false) THEN e.acct_key END) AS m4_leaked_intent_accounts,
        g.m4_jan_eom_balance,
        g.m4_co8_amt,
+       g.m4_co10_amt,
        g.m4_co12_amt,
        g.m4_jan_bal_co8,
+       g.m4_jan_bal_co10,
        g.m4_jan_bal_co12
 FROM ep2 e
 JOIN acct_bal_grp g ON g.language_group = e.language_group
-GROUP BY 1, 8, 9, 10, 11, 12
+GROUP BY 1, 9, 10, 11, 12, 13, 14, 15
 ORDER BY 1

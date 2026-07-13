@@ -1,28 +1,33 @@
--- Tier 15 | NEW QUERY, drafted 2026-07-13.
--- Purpose: the product-class (CPC) distribution of the final ex-AA ledger
--- (189,146). Reuses b14_exaa.sql's snap/monthly/ledger CTEs verbatim
--- (January window, eff_dt >= '20250101' AND < '20250201'; cleaned rule;
--- eom_cpc kept), with the standard NULL-safe 23-code ex-AA exclusion applied
--- so the base is exactly the 189,146-account ledger. Final SELECT re-groups
--- eom_cpc under the FULL client CPC mapping (AA tested first, in the order
--- given; ELSE 'OTHER' also catches NULL/blank cpc).
--- Credit-limit column: CR_LMT_ORIGL_AMT per data-dictionary.md line 118/430
--- (fmt_acct_c "Balances, APR, credit limit" section; SAS name = dictionary
--- name, no renaming noted for this table). [VERIFY: run DESCRIBE
--- fmt_acct_dba.fmt_acct_c; and confirm cr_lmt_origl_amt is present with this
--- exact casing before trusting orig_credit_limit_* below] -- one-line check:
---   DESCRIBE "fmt_acct_dba"."fmt_acct_c";  -- grep output for cr_lmt_origl_amt
+-- Tier 15 | NEW QUERY, drafted 2026-07-13, REVISED 2026-07-13 (P17).
+-- Purpose: the product-class (CPC) distribution of the CLEANED January
+-- bucket-1 ledger, with NO ex-AA filter, so AA / GM / Bronco appear as their
+-- OWN rows (Ravi's point 3: the earlier _exaa variant filtered AA/GM/Bronco
+-- out before grouping, leaving only CoBrand / Biz / PLCC / OTHER; this
+-- version keeps every account so the full CPC decomposition is visible).
+-- Reuses b14_ledger's snap/monthly/ledger CTEs verbatim (January window,
+-- eff_dt >= '20250101' AND < '20250201'; cleaned rule co_dt IS NULL OR
+-- co_dt >= 2025-01-01; eom_cpc kept). The ONLY change vs b14's ledger is
+-- that the ex-AA exclusion predicate is REMOVED, so the base is the full
+-- cleaned 204,323-account ledger. Final SELECT groups eom_cpc under the full
+-- client CPC mapping (AA tested first, in the order given; ELSE 'OTHER' also
+-- catches NULL / blank cpc and the bare code '2').
+-- Credit-limit column CONFIRMED against the live Athena schema
+-- (athena-filter-check-transcription-2026-07-13.md, DESCRIBE fmt_acct_c row
+-- 74: cr_lmt_origl_amt decimal(17,3)). The earlier [VERIFY] is CLOSED; no
+-- DESCRIBE needed before running.
 -- PRE-REGISTERED TIE-OUTS (STOP RULE):
---   - accounts summed across all cpc_class rows = 189,146 EXACTLY.
---   - jan_eom_balance summed across all rows ~= 457,943,987 (tolerance $5).
---   - AA, GM, and Bronco rows are ZERO by construction (the ex-AA exclusion
---     already removed every account carrying those codes at EOM). Any
---     nonzero accounts in AA/GM/Bronco = STOP, route to the keeper.
---   - Biz appears only via its 6 non-AA-overlapping codes (BHA/BJT/BJC/BFR/
---     BWY/BBB); BA5/BC5 are excluded upstream as part of the AA code set and
---     will not appear under Biz here.
+--   - accounts summed across ALL cpc_class rows = 204,323 EXACTLY (the
+--     cleaned ledger; matches athena-filter-check round 3: AA 15,177 +
+--     others 189,146).
+--   - the AA row = 15,177 EXACTLY, balance ~73,744,823 (P-C round 3).
+--   - the OTHER-plus-non-AA rows sum to 189,146 accounts / ~457,943,985
+--     balance (the ex-AA ledger).
+--   - jan_eom_balance summed across all rows = ~531,688,808 (tolerance $5).
+--   - GM and Bronco rows: zero or absent (CQ-8 / P-C: AA-and-others only at
+--     code 1). A NONZERO GM/Bronco row is NOT an error here (this is the
+--     unfiltered ledger) but IS a surprise vs the SAS read: flag, do not stop.
 -- RESOURCE DISCIPLINE: single January account scan (snap/monthly), same as
--- b14_exaa; no additional table scans.
+-- b14; no additional table scans.
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -67,19 +72,15 @@ ledger AS (
     WHERE ym = '202501'
       AND eom_bucket = 1
       AND (co_dt IS NULL OR co_dt >= DATE '2025-01-01')
-      AND (eom_cpc IS NULL OR trim(eom_cpc) = ''
-           OR eom_cpc NOT IN ('AA2','BC5','BA5','AA1','AC1','AM1','AC2','AM2',
-                               'AA3','AC3','AM3','AA4','AC4','AM4',
-                               'BGC','BGM','CGM','GMR',
-                               'FBS','IBS','U1C','U2C','U3C'))
+    -- NOTE: no ex-AA exclusion here (intentional; point 3). This is the
+    -- full cleaned 204,323-account ledger.
 )
 SELECT CASE
          WHEN eom_cpc IN ('AA2','BC5','BA5','AA1','AC1','AM1','AC2','AM2',
                            'AA3','AC3','AM3','AA4','AC4','AM4')     THEN 'AA'
          WHEN eom_cpc IN ('BGC','BGM','CGM','GMR')                 THEN 'GM'
          WHEN eom_cpc IN ('FBS','IBS','U1C','U2C','U3C')           THEN 'Bronco'
-         WHEN eom_cpc IN ('BA5','BC5','BHA','BJT','BJC','BFR','BWY','BBB')
-                                                                     THEN 'Biz'
+         WHEN eom_cpc IN ('BHA','BJT','BJC','BFR','BWY','BBB')     THEN 'Biz'
          WHEN eom_cpc IN ('GAP','GP2','ONV','ON2','BRP','BR2','ATH','AT2',
                            'GPC','G2C','ONC','O2C','BRC','B2C','ATC','A2C')
                                                                      THEN 'CoBrand'
@@ -93,4 +94,4 @@ SELECT CASE
        round(avg(eom_cr_lmt_origl_amt), 0) AS orig_credit_limit_avg
 FROM ledger
 GROUP BY 1
-ORDER BY 1
+ORDER BY 2 DESC

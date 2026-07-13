@@ -10,17 +10,36 @@
 -- ex-AA (NULL-safe eom_cpc predicate, same 23-code set). Joins January
 -- inbound episodes (b14_exaa's inb/episodes CTEs verbatim), semi-joined to
 -- this population for cost.
+-- BALANCE + CHARGE-OFF DOLLARS (P17, per Ravi point 4): every row carries
+-- jan_eom_balance plus, for each of three windows anchored at 31 Jan 2025,
+-- the ACCOUNT COUNT and the GROSS charge-off dollar (sum of chrgoff_amt):
+--   CO8  : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-09-30'
+--   CO10 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-11-30'
+--   CO12 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2026-01-31'
+-- CO dollars come from a new future_co CTE (identical shape to b14/b15/m4/b19:
+-- co_dt_future = min(chrgoff_dt), co_amt = min_by(chrgoff_amt, chrgoff_dt)
+-- over 2025 daily rows with chrgoff_dt NOT NULL, semi-joined to the touched_b1
+-- population to bound cost). Output grain is ACCOUNT-level per class (one row
+-- per account in classed), so plain sums are correct here; the per_acct join
+-- is 1-row-per-account and does not fan out the balance/CO sums.
 -- PRE-REGISTERED TIE-OUTS (STOP RULE):
 --   - Row b ('bucket 1 at 31 Jan') MUST reproduce the b14_exaa ledger
---     numbers EXACTLY: 189,146 accounts / 9,389 callers / 11,262 episodes.
---     This is the strongest cross-check; any mismatch = STOP, route to the
---     keeper before trusting rows a/c/d.
+--     numbers EXACTLY: 189,146 accounts / 9,389 callers / 11,262 episodes,
+--     and its jan_eom_balance = ~457,943,987. This is the strongest
+--     cross-check; any mismatch = STOP, route to the keeper before trusting
+--     rows a/c/d or any CO column.
 --   - Row a ('current at 31 Jan, cured in month') pct_accounts_calling
 --     should sit near b7_exaa's class-a caller rate (14.7%).
 --   - Row c is the NEW information: the DQ1-to-deeper-within-January
 --     callers the current bucket-1-at-EOM ledger does not count.
+--   - The CO8/10/12 columns are NEW measurements on the re-anchored windows
+--     (no pre-registered value). Plausibility bounds only: per row
+--     co12 >= co10 >= co8 for both counts and dollars; every CO dollar and
+--     balance sum >= 0; coN_amt is the same order of magnitude as the
+--     balance on those accounts.
 -- RESOURCE DISCIPLINE: one January account scan (snap/monthly, as in
--- b14_exaa); episodes CTE built first and semi-joined against the
+-- b14_exaa) plus one forward 2025 scan (future_co, semi-joined to the
+-- population); episodes CTE built first and semi-joined against the
 -- touched_b1 population to bound cost, matching the tier-14 fixes.
 WITH snap AS (
     SELECT extnl_acct_id,
@@ -85,6 +104,21 @@ classed AS (
            END AS class
     FROM population
 ),
+future_co AS (
+    SELECT extnl_acct_id,
+           min(try_cast(chrgoff_dt AS date)) AS co_dt_future,
+           -- co_amt = the charge-off amount on the row with the earliest
+           -- charge-off date. The CTE's WHERE already restricts to
+           -- chrgoff_dt IS NOT NULL, so no FILTER clause is needed (kept out
+           -- to avoid a syntax path not exercised by the verified tier-14 kit).
+           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date)) AS co_amt
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20250101' AND eff_dt < '20260101'
+      AND chrgoff_dt IS NOT NULL
+      AND trim(cast(extnl_acct_id AS varchar)) IN (SELECT acct_key FROM population)
+    GROUP BY 1
+),
 inb AS (
     SELECT trim(cast(acctid AS varchar)) AS acct_key, contactid,
            "date" AS call_dt, initiationtimestamp
@@ -115,8 +149,25 @@ SELECT c.class,
        count(e.acct_key) AS callers,
        coalesce(sum(e.n_episodes), 0) AS episodes,
        round(100.0 * count(e.acct_key) / count(*), 1) AS pct_accounts_calling,
-       round(sum(c.eom_bal), 0) AS jan_eom_balance
+       round(sum(c.eom_bal), 0) AS jan_eom_balance,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-09-30') AS co_8m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-11-30') AS co_10m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2026-01-31') AS co_12m,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-09-30'
+                      THEN f.co_amt END), 0) AS co8_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-11-30'
+                      THEN f.co_amt END), 0) AS co10_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2026-01-31'
+                      THEN f.co_amt END), 0) AS co12_amt
 FROM classed c
 LEFT JOIN per_acct e ON c.acct_key = e.acct_key
+LEFT JOIN future_co f
+  ON trim(cast(f.extnl_acct_id AS varchar)) = c.acct_key
 GROUP BY 1
 ORDER BY 1

@@ -1,38 +1,46 @@
 -- Tier 15 | ADDITIVE VARIANT of b15_exaa.sql, drafted 2026-07-13; logic
--- unchanged, columns appended.
--- PRE-REGISTERED TIE-OUT (STOP RULE): every pre-existing column must
--- reproduce the tier-14 recorded values EXACTLY on re-run: b15_accounts
--- across ALL class rows sums to 2,177 EXACTLY; deceased-flag 'a' rows sum
--- to 210 EXACTLY; b15_co_12m sums to 1,006 EXACTLY; b15_jan_eom_balance
--- sums to ~9,752,424 (rounding tolerance). Any mismatch on these = STOP,
--- route to the keeper before trusting the new columns below.
--- ADDITION: future_co already finds min(co_dt) = the account's earliest
--- 2025 charge-off date via a MIN over the same forward daily scan
--- (fmt_acct_c, 2025-01-01 to 2026-01-01, chrgoff_dt IS NOT NULL). The
--- charge-off amount is threaded as co_amt = min_by(try_cast(chrgoff_amt AS
--- double), try_cast(chrgoff_dt AS date)) filtered the same way, so co_amt
--- is the amount recorded on the SAME row as the earliest co_dt (paired via
--- min_by on the identical key column, not an independent aggregate) -
--- consistent with the existing scan, which only ever needed the min date
--- and never touched amount. New final-SELECT columns, appended at the end,
--- in existing group order: b15_co12_amt (sum of co_amt where co_dt_future
--- falls in the CO12 window, i.e. the same predicate as b15_co_12m),
--- b15_co8_amt (same for the CO8 window / b15_co_8m predicate), and
--- b15_jan_bal_co12 / b15_jan_bal_co8 (sum of l.eom_bal, i.e. the same Jan
--- EOM balance already summed unconditionally into b15_jan_eom_balance,
--- restricted to those two CO windows).
--- PLAUSIBILITY BOUNDS: b15_co12_amt >= 0 and >= b15_co8_amt for every row
--- (CO12 window strictly contains CO8 window, later cutoff); b15_jan_bal_co12
--- >= b15_jan_bal_co8 for the same reason; b15_jan_bal_co12 and
--- b15_jan_bal_co8 are each <= b15_jan_eom_balance for that row; b15_co12_amt
--- should sit in the same order of magnitude as b15_jan_bal_co12 (both are
--- balance-scale dollars on the same accounts, charge-off amount is not
--- expected to equal balance exactly but should not differ by orders of
--- magnitude).
--- RESOURCE DISCIPLINE: no new scans added: future_co is the same forward
--- scan as tier 14, only the SELECT list of that CTE gains one column
--- (co_amt) via a second aggregate over the already-scanned rows; the
--- one-pass / semi-join shape of the original is otherwise untouched.
+-- unchanged, balance and charge-off dollar columns appended.
+-- RE-ANCHORED CO WINDOWS (per Ravi, P17): the forward charge-off scan is now
+-- anchored at 31 Jan 2025, NOT 1 Jan 2025. The three windows on
+-- future_co.co_dt_future are:
+--   CO8  : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-09-30'
+--   CO10 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-11-30'
+--   CO12 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2026-01-31'
+-- This anchor applies to the co_8m/co_10m/co_12m COUNTS and to every
+-- charge-off dollar and window-restricted balance column below.
+-- CO-COUNT TIE-OUTS RE-BASELINED: the tier-14 recorded counts (b15_co_8m 853,
+-- b15_co_10m 943, b15_co_12m 1,006) were computed on the OLD Jan-01 anchor.
+-- With the anchor moved to Jan-31 they will NOT reproduce exactly. Expect
+-- values near the old numbers but not equal. These are NOTES, not STOP rules.
+-- SURVIVING HARD STOPS (do NOT depend on the CO window; any mismatch = STOP,
+-- route to the keeper before trusting the new columns):
+--   * b15_accounts across ALL class rows sums to 2,177 EXACTLY.
+--   * deceased-flag 'a' rows sum to 210 EXACTLY.
+--   * b15_jan_eom_balance sums to ~9,752,424 (rounding tolerance).
+-- NEW COLUMNS (appended to the final SELECT, in existing group order):
+--   * b15_co8_amt / b15_co10_amt / b15_co12_amt = round(sum(chrgoff_amt), 0)
+--     over the CO8 / CO10 / CO12 window (GROSS charge-off dollars).
+--   * b15_jan_bal_co8 / b15_jan_bal_co10 / b15_jan_bal_co12 = round(sum of the
+--     Jan EOM balance, 0) restricted to the CO8 / CO10 / CO12 window, i.e. the
+--     same l.eom_bal already summed unconditionally into b15_jan_eom_balance,
+--     but limited to accounts whose earliest 2025 charge-off lands in-window.
+-- All three windows (8/10/12) now carry a count, a gross CO dollar, and a
+-- window-restricted Jan EOM balance.
+-- CO DOLLAR SOURCE: future_co finds co_dt_future = min(co_dt) = the account's
+-- earliest 2025 charge-off date, and pairs to it co_amt = min_by(chrgoff_amt,
+-- chrgoff_dt) FILTER (WHERE chrgoff_dt IS NOT NULL), so co_amt is the
+-- charge-off amount on the SAME row as the earliest co_dt. Output is
+-- account-level (JOIN ledger l on acct_key, LEFT JOIN future_co), one ledger
+-- row per account, so a plain sum is correct here; no per-episode dedup needed.
+-- PLAUSIBILITY BOUNDS (state only, not tie-outs): every balance / CO-dollar
+-- sum >= 0; per row b15_co12_amt >= b15_co10_amt >= b15_co8_amt and
+-- b15_jan_bal_co12 >= b15_jan_bal_co10 >= b15_jan_bal_co8 (each wider CO window
+-- contains the narrower one); each b15_jan_bal_coN <= b15_jan_eom_balance for
+-- that row; coN_amt sits in the same order of magnitude as the balance on
+-- those accounts (charge-off amount ~ balance scale, not equal).
+-- RESOURCE DISCIPLINE: no new base-table scans. co_amt rides the same forward
+-- scan already in place (a second aggregate over rows already read);
+-- chrgoff_amt / acct_bal_amt are columns on rows the scans already touch.
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -111,8 +119,11 @@ ledger AS (
 future_co AS (
     SELECT extnl_acct_id,
            min(try_cast(chrgoff_dt AS date)) AS co_dt_future,
-           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date))
-             FILTER (WHERE chrgoff_dt IS NOT NULL) AS co_amt
+           -- co_amt = the charge-off amount on the row with the earliest
+           -- charge-off date. The CTE's WHERE already restricts to
+           -- chrgoff_dt IS NOT NULL, so no FILTER clause is needed (kept out
+           -- to avoid a syntax path not exercised by the verified tier-14 kit).
+           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date)) AS co_amt
     FROM "fmt_acct_dba"."fmt_acct_c"
     WHERE sfx_nbr = 0
       AND eff_dt >= '20250101' AND eff_dt < '20260101'
@@ -222,25 +233,31 @@ SELECT CASE WHEN k.deceased_flag = 1 THEN 'a. deceased or estate language'
        l.feb_position AS b15_feb_position,
        l.mar_position AS b15_mar_position,
        count(*) AS b15_accounts,
-       count_if(f.co_dt_future >= DATE '2025-01-01'
-                AND f.co_dt_future < DATE '2025-09-01') AS b15_co_8m,
-       count_if(f.co_dt_future >= DATE '2025-01-01'
-                AND f.co_dt_future < DATE '2025-11-01') AS b15_co_10m,
-       count_if(f.co_dt_future >= DATE '2025-01-01'
-                AND f.co_dt_future < DATE '2026-01-01') AS b15_co_12m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-09-30') AS b15_co_8m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-11-30') AS b15_co_10m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2026-01-31') AS b15_co_12m,
        round(sum(l.eom_bal), 0) AS b15_jan_eom_balance,
-       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-01'
-                       AND f.co_dt_future < DATE '2026-01-01'
-                      THEN f.co_amt END), 0) AS b15_co12_amt,
-       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-01'
-                       AND f.co_dt_future < DATE '2025-09-01'
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-09-30'
                       THEN f.co_amt END), 0) AS b15_co8_amt,
-       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-01'
-                       AND f.co_dt_future < DATE '2026-01-01'
-                      THEN l.eom_bal END), 0) AS b15_jan_bal_co12,
-       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-01'
-                       AND f.co_dt_future < DATE '2025-09-01'
-                      THEN l.eom_bal END), 0) AS b15_jan_bal_co8
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-11-30'
+                      THEN f.co_amt END), 0) AS b15_co10_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2026-01-31'
+                      THEN f.co_amt END), 0) AS b15_co12_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-09-30'
+                      THEN l.eom_bal END), 0) AS b15_jan_bal_co8,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-11-30'
+                      THEN l.eom_bal END), 0) AS b15_jan_bal_co10,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2026-01-31'
+                      THEN l.eom_bal END), 0) AS b15_jan_bal_co12
 FROM leaklist k
 JOIN ledger l ON k.acct_key = l.acct_key
 LEFT JOIN future_co f

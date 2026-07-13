@@ -1,36 +1,54 @@
 -- Tier 15 | ADDITIVE VARIANT of b14_exaa.sql, drafted 2026-07-13; logic
 -- unchanged, columns appended.
--- PRE-REGISTERED TIE-OUT (STOP RULE): total accounts (b14_accounts summed
--- across ALL rows) = 189,146 EXACTLY; total balance (b14_jan_eom_balance
--- summed) = ~457,943,987 (rounding tolerance ~$5). Any mismatch = STOP,
--- route to the keeper before running any other tier-15 file and before
--- trusting the new column below. This query MUST still run FIRST AND
--- ALONE per the tier-14 header.
--- ADDITION: monthly already computes eom_bal = max_by(bal, eff_dt) and
--- co_dt = min(co_dt) per account-month over the existing Dec-Feb scan.
--- One more expression, eom_co_amt = max_by(try_cast(chrgoff_amt AS
--- double), eff_dt), is added to the SAME monthly GROUP BY (no new scan;
--- chrgoff_amt already lives on the rows snap already reads). base picks
--- up f.eom_co_amt from the Feb monthly row (f, ym = '202502') alongside
--- the existing f.eom_bucket/f.co_dt it already joins, and ledger threads
--- it through unchanged as feb_co_amt. Nothing else in monthly/base/ledger
--- changes.
--- New final-SELECT column: b14_co_amt = round(sum(CASE WHEN l.feb_position
--- = 'e. charged off in Feb' THEN l.feb_co_amt END), 0) - i.e. the Feb
--- charge-off amount summed only over the rows whose feb_position is
--- already the charged-off-in-Feb class (mirrors the existing
--- b14_jan_eom_balance sum pattern exactly, just gated to that one class
--- instead of unconditional).
--- PLAUSIBILITY BOUNDS: b14_co_amt >= 0 for every row; b14_co_amt is 0 (or
--- NULL-summed-to-0) for every row whose feb_position is NOT 'e. charged
--- off in Feb', since eom_co_amt is only non-null on charged-off accounts
--- and the CASE gates on that exact class; b14_co_amt should sit in the
--- same order of magnitude as b14_jan_eom_balance for the 'e. charged off
--- in Feb' rows specifically (charge-off amount and pre-charge-off Jan
--- balance are the same account population, comparable dollar scale).
--- RESOURCE DISCIPLINE: no new scans; the added column rides the same
--- Dec-Feb snap scan and the same monthly/base joins already in place;
--- the query stays "run first and alone" per the tier-14 note.
+-- WHAT THIS FILE ADDS (Ravi point 4): the same 31-Jan-anchored balance and
+-- forward charge-off treatment carried by the other tier-15 _bal files, on
+-- the ledger transitions grain (feb_position x caller_class x runway_band,
+-- account-level, one ledger row per account).
+-- RE-ANCHORED CO WINDOWS: the forward charge-off scan (future_co CTE, the
+-- same shape as b15) computes co_dt_future = min(try_cast(chrgoff_dt AS
+-- date)) over 2025 daily rows and, paired to it, co_amt = min_by(
+-- try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date)) filtered to
+-- rows with a charge-off date, so co_amt is the amount on the SAME row as the
+-- earliest co_dt. All three CO windows are anchored at 2025-01-31 per Ravi
+-- (NOT 2025-01-01):
+--   CO8  : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-09-30'
+--   CO10 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2025-11-30'
+--   CO12 : co_dt_future >= DATE '2025-01-31' AND co_dt_future < DATE '2026-01-31'
+-- SURVIVING HARD STOP TIE-OUTS (do NOT depend on the CO window): total
+-- accounts (b14_accounts summed across ALL rows) = 189,146 EXACTLY; total
+-- balance (b14_jan_eom_balance summed) = ~457,943,987 (rounding tolerance
+-- ~$5). Any mismatch on either = STOP, route to the keeper before running
+-- any other tier-15 file and before trusting the new columns below. This
+-- query MUST still run FIRST AND ALONE per the tier-14 header.
+-- RE-BASELINED (NOT a STOP): the CO-window counts and dollars below are new
+-- measurements on the 31-Jan anchor. There is no prior recorded value to tie
+-- them to. State the plausibility bounds only, do not gate on an exact match.
+-- NEW COLUMNS, appended after the existing ones:
+--   b14_co_amt   : the FEB charge-off dollar (sum of feb_co_amt gated to
+--                  feb_position = 'e. charged off in Feb'). KEPT from the
+--                  prior draft as a useful extra; it is the Feb monthly-row
+--                  charge-off amount, distinct from the forward-scan columns.
+--   b14_co_8m / _co_10m / _co_12m   : ACCOUNT counts with co_dt_future in the
+--                  CO8 / CO10 / CO12 window (count_if on the forward scan).
+--   b14_co8_amt / _co10_amt / _co12_amt : round(sum(co_amt in window), 0),
+--                  the GROSS forward charge-off dollar in each window.
+-- The Feb-CO plumbing (eom_co_amt in monthly, feb_co_amt in base/ledger) is
+-- unchanged from the prior draft and only feeds b14_co_amt.
+-- PLAUSIBILITY BOUNDS (not tie-outs): all balance/CO-dollar sums >= 0;
+-- b14_co_12m >= b14_co_10m >= b14_co_8m per row and likewise b14_co12_amt >=
+-- b14_co10_amt >= b14_co8_amt (the CO12 window contains CO10 contains CO8);
+-- each coN_amt is balance-scale on those accounts (charge-off amount ~
+-- balance scale, not equal); b14_co_amt >= 0 and is 0 (or NULL-summed-to-0)
+-- for every row whose feb_position is NOT 'e. charged off in Feb'.
+-- ACCOUNT-LEVEL GRAIN: the ledger holds one row per account, so plain sums
+-- (count(*), sum(eom_bal), sum(co_amt), count_if) are correct here with no
+-- per-episode dedup. The acct_group/acct_bal dedup CTE used by the
+-- episode-grained files (m4, b19) is not needed and is not added.
+-- RESOURCE DISCIPLINE: future_co is the same forward scan already used by
+-- tier 14 (fmt_acct_c, 2025-01-01 to 2026-01-01, chrgoff_dt IS NOT NULL);
+-- its SELECT list only gains co_amt via a second aggregate over the
+-- already-scanned rows. chrgoff_amt and acct_bal_amt ride scans already in
+-- place. No new base-table scans; the query stays run first and alone.
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -111,6 +129,20 @@ ledger AS (
                                'AA3','AC3','AM3','AA4','AC4','AM4',
                                'BGC','BGM','CGM','GMR',
                                'FBS','IBS','U1C','U2C','U3C'))
+),
+future_co AS (
+    SELECT extnl_acct_id,
+           min(try_cast(chrgoff_dt AS date)) AS co_dt_future,
+           -- co_amt = the charge-off amount on the row with the earliest
+           -- charge-off date. The CTE's WHERE already restricts to
+           -- chrgoff_dt IS NOT NULL, so no FILTER clause is needed (kept out
+           -- to avoid a syntax path not exercised by the verified tier-14 kit).
+           min_by(try_cast(chrgoff_amt AS double), try_cast(chrgoff_dt AS date)) AS co_amt
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20250101' AND eff_dt < '20260101'
+      AND chrgoff_dt IS NOT NULL
+    GROUP BY 1
 ),
 pay_snap AS (
     SELECT extnl_acct_id, eff_dt,
@@ -214,8 +246,25 @@ SELECT l.feb_position AS b14_feb_position,
        count(*) AS b14_accounts,
        round(sum(l.eom_bal), 0) AS b14_jan_eom_balance,
        round(sum(CASE WHEN l.feb_position = 'e. charged off in Feb'
-                      THEN l.feb_co_amt END), 0) AS b14_co_amt
+                      THEN l.feb_co_amt END), 0) AS b14_co_amt,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-09-30') AS b14_co_8m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2025-11-30') AS b14_co_10m,
+       count_if(f.co_dt_future >= DATE '2025-01-31'
+                AND f.co_dt_future < DATE '2026-01-31') AS b14_co_12m,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-09-30'
+                      THEN f.co_amt END), 0) AS b14_co8_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2025-11-30'
+                      THEN f.co_amt END), 0) AS b14_co10_amt,
+       round(sum(CASE WHEN f.co_dt_future >= DATE '2025-01-31'
+                       AND f.co_dt_future < DATE '2026-01-31'
+                      THEN f.co_amt END), 0) AS b14_co12_amt
 FROM ledger l
 LEFT JOIN caller k ON l.acct_key = k.acct_key
+LEFT JOIN future_co f
+  ON trim(cast(f.extnl_acct_id AS varchar)) = l.acct_key
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3
