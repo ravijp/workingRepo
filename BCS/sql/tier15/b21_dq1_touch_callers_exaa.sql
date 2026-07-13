@@ -22,12 +22,18 @@
 -- population to bound cost). Output grain is ACCOUNT-level per class (one row
 -- per account in classed), so plain sums are correct here; the per_acct join
 -- is 1-row-per-account and does not fan out the balance/CO sums.
--- PRE-REGISTERED TIE-OUTS (STOP RULE):
---   - Row b ('bucket 1 at 31 Jan') MUST reproduce the b14_exaa ledger
---     numbers EXACTLY: 189,146 accounts / 9,389 callers / 11,262 episodes,
---     and its jan_eom_balance = ~457,943,987. This is the strongest
---     cross-check; any mismatch = STOP, route to the keeper before trusting
---     rows a/c/d or any CO column.
+-- PRE-REGISTERED TIE-OUTS (STOP RULE) — CORRECTED 2026-07-14 after the run:
+--   - Row b ('bucket 1 at 31 Jan') does NOT equal the b14 ledger on its own,
+--     because b21 splits accounts that CHARGED OFF IN JANUARY into their own
+--     class d, while b14's ledger folds them in (b14 cleanup drops only
+--     PRE-2025 charge-offs, so Jan-CO accounts stay eom_bucket=1 there). The
+--     correct cross-check is ADDITIVE:
+--       row b accounts + (the eom_bucket=1 subset of class d) = 189,146.
+--     Measured 2026-07-14: row b = 186,714 + 2,432 Jan-CO = 189,146 EXACT;
+--     callers 9,330 + 59 = 9,389 EXACT; episodes 11,197 + 65 = 11,262 EXACT.
+--     (The earlier draft wrongly demanded row b = 189,146 alone; that was a
+--     mis-specification, not a data problem.) If the additive reconciliation
+--     does not close, STOP.
 --   - Row a ('current at 31 Jan, cured in month') pct_accounts_calling
 --     should sit near b7_exaa's class-a caller rate (14.7%).
 --   - Row c is the NEW information: the DQ1-to-deeper-within-January
