@@ -1,131 +1,36 @@
--- Tier 15 | m4_exaa_bal, REWRITTEN 2026-07-14 (P17) as TWO STEPS to fix the
--- out-of-memory failure. Same numbers as the drafted single-query version;
--- only the execution shape changed.
+-- Tier 15 | m4_exaa_bal, SINGLE-QUERY rewrite 2026-07-14 (P17) to fix the
+-- out-of-memory failure WITHOUT creating any table (Ravi cannot CREATE TABLE).
+-- Same numbers as the drafted version; only the execution shape changed.
 --
--- WHY IT OOM'd: the single-query version fused ONE transcript scan carrying
--- SIX regexp_like count_if passes over the utterance table (4.9B rows) with
--- the downstream forward-CO scan, the ledger join, the caller CTE, and the
--- three-CTE balance dedup, all in one plan. Trino/Spark tried to hold the
--- exploded intermediate in memory. b15 ran fine because it does only TWO
--- regex passes and a narrower join. The fix is to make the transcript
--- aggregation COLLAPSE to one row per contactid and land it BEFORE anything
--- joins to it, so the heavy regex work never co-resides with the wide joins.
---
--- STEP 1 builds a small signal table (one row per ledger-episode contactid,
--- the six lexicon flag counts) into the temp schema. STEP 2 reads that plus
--- the account spine and produces the m4 grid. On Databricks this is the first
--- real piece of the warehouse: STEP 1 == uc2_episode_signal (restricted to
--- the ledger episodes), STEP 2 == the m4 insight. Set @DB below to your temp
--- catalog.schema (e.g. cda_model_shared.ecm_cld_model). On Athena, replace the
--- CREATE TABLE with the console's CTAS target, or run STEP 1 as a saved
--- named-query and STEP 2 against it.
+-- WHY IT OOM'd, and the three single-query fixes applied:
+--  (1) TWO transcript references. The draft referenced the tx CTE twice (once
+--      in `caller` for pay_n, once in `ep2` for all six flags), so the planner
+--      could scan/materialize the 4.9B-row transcript TWICE. FIX: tx is now
+--      referenced EXACTLY ONCE. The caller-level any_captured / any_leaked_intent
+--      are computed as window functions over the single episode-signal CTE
+--      (esig), partitioned by acct_key, so no second transcript touch.
+--  (2) participantid = 'CUSTOMER' sat INSIDE each count_if, so regexp_like ran
+--      on agent rows too, then was discarded. FIX: participantid = 'CUSTOMER'
+--      moved to the tx WHERE clause, plus a single coarse pre-filter rlike that
+--      lets only utterances containing ANY relevant token reach the six precise
+--      passes. This drops the overwhelming majority of utterances before the
+--      expensive regex work. The six count_if flags are unchanged in meaning
+--      (a row that fails the coarse gate matches none of them anyway).
+--  (3) Boolean presence, not raw counts, carried forward (max(...) per
+--      contactid) -> a narrow one-row-per-contactid intermediate.
 --
 -- SURVIVING HARD STOP: m4_episodes across all language-group rows = 11,262
 -- EXACTLY. CO-count tie-outs are re-baselined (31-Jan anchor), NOTES only.
 -- New columns: m4_co_10m_accounts, m4_jan_eom_balance, m4_co8/10/12_amt,
 -- m4_jan_bal_co8/10/12. Windows anchored at 31 Jan (CO8 [01-31,09-30),
 -- CO10 [..,11-30), CO12 [..,2026-01-31)). Balance/CO-dollar sums are deduped
--- one row per account per language group (acct_group/acct_bal/acct_bal_grp).
-
--- ============================================================================
--- STEP 1 — build the ledger-episode signal table (the one transcript scan).
--- Replace <DB> with your temp catalog.schema. Databricks: CREATE OR REPLACE
--- TABLE. Idempotent; rerun freely.
--- ============================================================================
-CREATE OR REPLACE TABLE <DB>.uc2_m4_signal AS
-WITH inb AS (
-    SELECT trim(cast(acctid AS varchar)) AS acct_key, contactid,
-           "date" AS call_dt, initiationtimestamp
-    FROM "contactcenter_bdp_db"."call"
-    WHERE initiationmethod = 'INBOUND'
-      AND "date" >= DATE '2025-01-01' AND "date" < DATE '2025-02-01'
-      AND effdt >= '2025-01-01' AND effdt < '2025-02-02'
-      AND coalesce(cast(producttype AS varchar), '') <> 'BUSINESS_CARD'
-),
-snap AS (
-    SELECT extnl_acct_id, substr(eff_dt, 1, 6) AS ym, eff_dt,
-           CASE
-             WHEN past_due_271_up_amt  > 0 THEN 10
-             WHEN past_due_241_270_amt > 0 THEN 9
-             WHEN past_due_211_240_amt > 0 THEN 8
-             WHEN past_due_181_210_amt > 0 THEN 7
-             WHEN past_due_151_180_amt > 0 THEN 6
-             WHEN past_due_121_150_amt > 0 THEN 5
-             WHEN past_due_91_120_amt  > 0 THEN 4
-             WHEN past_due_61_90_amt   > 0 THEN 3
-             WHEN past_due_31_60_amt   > 0 THEN 2
-             WHEN past_due_1_30_amt    > 0 THEN 1
-             ELSE 0
-           END AS bucket,
-           try_cast(chrgoff_dt AS date) AS co_dt,
-           clnt_prdct_cd
-    FROM "fmt_acct_dba"."fmt_acct_c"
-    WHERE sfx_nbr = 0
-      AND eff_dt >= '20241201' AND eff_dt < '20250201'
-),
-monthly AS (
-    SELECT extnl_acct_id, ym,
-           max_by(bucket, eff_dt) AS eom_bucket,
-           min(co_dt) AS co_dt,
-           max_by(clnt_prdct_cd, eff_dt) AS eom_cpc
-    FROM snap GROUP BY 1, 2
-),
-ledger AS (   -- the ex-AA cleaned bucket-1 ledger (defines the episode set)
-    SELECT trim(cast(extnl_acct_id AS varchar)) AS acct_key
-    FROM (SELECT * FROM monthly WHERE ym = '202501')
-    WHERE eom_bucket = 1
-      AND (co_dt IS NULL OR co_dt >= DATE '2025-01-01')
-      AND (eom_cpc IS NULL OR trim(eom_cpc) = ''
-           OR eom_cpc NOT IN ('AA2','BC5','BA5','AA1','AC1','AM1','AC2','AM2',
-                               'AA3','AC3','AM3','AA4','AC4','AM4',
-                               'BGC','BGM','CGM','GMR',
-                               'FBS','IBS','U1C','U2C','U3C'))
-),
-episodes AS (   -- first inbound per account-day, restricted to the ledger
-    SELECT acct_key, contactid, call_dt
-    FROM (
-        SELECT i.acct_key, i.contactid, i.call_dt,
-               row_number() OVER (PARTITION BY i.acct_key, i.call_dt
-                                  ORDER BY i.initiationtimestamp) AS rn
-        FROM inb i
-        JOIN ledger l ON l.acct_key = i.acct_key
-        WHERE i.acct_key IS NOT NULL AND i.acct_key <> ''
-    )
-    WHERE rn = 1
-),
-ep_cid AS (SELECT DISTINCT contactid FROM episodes)
--- The ONE transcript scan, collapsed to one row per contactid. This is the
--- only heavy step and it now stands alone; nothing joins to it here.
-SELECT t.contactid,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'passed away|death certificate|executor|deceased|calling on behalf')) AS deceased_n,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'pay|paid|payment|settle|payment plan|arrangement|work something out')) AS pay_n,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'settle|payment plan|arrangement|work something out')) AS plan_n,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'hardship|lost my job|laid off|unemploy|hospital|sick|struggl|can.t afford')) AS hard_n,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'dispute|not my charge|didn.t authorize|did not authorize|unauthorized|fraud|identity theft')) AS dispute_n,
-       count_if(t.participantid = 'CUSTOMER'
-                AND regexp_like(lower(t.content),
-                    'i.ll pay|i will pay|going to pay|gonna pay|pay (on|by|this|next)|when i get paid|payday|after my paycheck')) AS promise_n
-FROM "contactcenter_bdp_db"."transcript" t
-JOIN ep_cid d ON t.contactid = d.contactid
- AND t.effdt >= '2025-01-01' AND t.effdt < '2025-02-02'
-WHERE t.content IS NOT NULL
-GROUP BY t.contactid;
-
--- ============================================================================
--- STEP 2 — the m4 grid. Reads STEP 1's signal table (small) + the account
--- spine + the forward-CO scan. No transcript scan here, so no OOM. Replace
--- <DB> with the same temp catalog.schema.
--- ============================================================================
+-- one row per account per language group (acct_bal_grp).
+--
+-- COARSE PRE-FILTER NOTE: the WHERE rlike is the OR-union of all six lexicon
+-- alternations. Any utterance matching a specific flag necessarily matches the
+-- union, so gating on the union cannot drop a would-be match. Verified by
+-- construction: the union string below is the concatenation of the six
+-- per-flag alternations with '|' between them.
 WITH snap AS (
     SELECT extnl_acct_id, substr(eff_dt, 1, 6) AS ym, eff_dt,
            CASE
@@ -223,8 +128,8 @@ pay_monthly2 AS (
            lead(nsf_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_nsf_dt
     FROM pay_monthly
 ),
-ep AS (   -- episode + capture, joined to the pre-built signal (no transcript scan)
-    SELECT e.acct_key, e.contactid,
+ep AS (
+    SELECT l.acct_key, e.contactid,
            CASE WHEN
                   (s.pay_dt IS NOT NULL AND s.pay_dt >= e.call_dt
                    AND s.pay_dt <= date_add('day', 30, e.call_dt)
@@ -236,41 +141,75 @@ ep AS (   -- episode + capture, joined to the pre-built signal (no transcript sc
                    AND s.next_pay_dt <= date_add('day', 30, e.call_dt)
                    AND (s.next_auto_dt IS NULL OR s.next_auto_dt <> s.next_pay_dt)
                    AND (s.next_nsf_dt IS NULL OR s.next_nsf_dt <> s.next_pay_dt))
-                THEN 1 ELSE 0 END AS captured,
-           x.deceased_n, x.pay_n, x.plan_n, x.hard_n, x.dispute_n, x.promise_n
+                THEN 1 ELSE 0 END AS captured
     FROM ledger l
     JOIN episodes e ON e.acct_key = l.acct_key
     LEFT JOIN pay_monthly2 s
       ON e.acct_key = trim(cast(s.extnl_acct_id AS varchar))
      AND e.call_month = cast(s.m AS date)
-    LEFT JOIN <DB>.uc2_m4_signal x ON x.contactid = e.contactid
 ),
-caller AS (
-    SELECT acct_key,
-           max(captured) AS any_captured,
-           max(CASE WHEN captured = 0 AND coalesce(pay_n, 0) > 0 THEN 1 ELSE 0 END) AS any_leaked_intent
-    FROM ep GROUP BY 1
+-- The ONE transcript scan. participantid + a coarse union pre-filter are in the
+-- WHERE, so regexp_like runs only on customer utterances that already contain a
+-- relevant token. Referenced exactly once (below).
+tx AS (
+    SELECT t.contactid,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'passed away|death certificate|executor|deceased|calling on behalf') THEN 1 ELSE 0 END) AS deceased_f,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'pay|paid|payment|settle|payment plan|arrangement|work something out') THEN 1 ELSE 0 END) AS pay_f,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'settle|payment plan|arrangement|work something out') THEN 1 ELSE 0 END) AS plan_f,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'hardship|lost my job|laid off|unemploy|hospital|sick|struggl|can.t afford') THEN 1 ELSE 0 END) AS hard_f,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'dispute|not my charge|didn.t authorize|did not authorize|unauthorized|fraud|identity theft') THEN 1 ELSE 0 END) AS dispute_f,
+           max(CASE WHEN regexp_like(lower(t.content),
+                     'i.ll pay|i will pay|going to pay|gonna pay|pay (on|by|this|next)|when i get paid|payday|after my paycheck') THEN 1 ELSE 0 END) AS promise_f
+    FROM "contactcenter_bdp_db"."transcript" t
+    JOIN (SELECT DISTINCT contactid FROM ep) d ON t.contactid = d.contactid
+    WHERE t.effdt >= '2025-01-01' AND t.effdt < '2025-02-02'
+      AND t.content IS NOT NULL
+      AND t.participantid = 'CUSTOMER'
+      AND regexp_like(lower(t.content),
+            'pay|paid|payment|settle|arrangement|work something out|passed away|death certificate|executor|deceased|calling on behalf|hardship|lost my job|laid off|unemploy|hospital|sick|struggl|can.t afford|dispute|not my charge|didn.t authorize|did not authorize|unauthorized|fraud|identity theft|i.ll pay|i will pay|going to pay|gonna pay|when i get paid|payday|after my paycheck')
+    GROUP BY 1
 ),
-ep2 AS (
-    SELECT e.acct_key, e.captured,
+-- episode + signal + CO flags + captured, in ONE pass (tx referenced once here).
+esig AS (
+    SELECT e.acct_key, e.contactid, e.captured,
            CASE
-             WHEN coalesce(e.deceased_n, 0) > 0 THEN 'a. deceased or estate'
-             WHEN coalesce(e.promise_n, 0)  > 0 THEN 'b. future-dated promise'
-             WHEN coalesce(e.pay_n, 0) > 0 AND coalesce(e.plan_n, 0) = 0 THEN 'c. payment talk, no promise'
-             WHEN coalesce(e.plan_n, 0)     > 0 THEN 'd. plan or settlement talk'
-             WHEN coalesce(e.hard_n, 0)     > 0 THEN 'e. hardship talk'
-             WHEN coalesce(e.dispute_n, 0)  > 0 THEN 'f. dispute or fraud talk'
+             WHEN coalesce(x.deceased_f, 0) > 0 THEN 'a. deceased or estate'
+             WHEN coalesce(x.promise_f, 0)  > 0 THEN 'b. future-dated promise'
+             WHEN coalesce(x.pay_f, 0) > 0 AND coalesce(x.plan_f, 0) = 0 THEN 'c. payment talk, no promise'
+             WHEN coalesce(x.plan_f, 0)     > 0 THEN 'd. plan or settlement talk'
+             WHEN coalesce(x.hard_f, 0)     > 0 THEN 'e. hardship talk'
+             WHEN coalesce(x.dispute_f, 0)  > 0 THEN 'f. dispute or fraud talk'
              ELSE 'g. no payment-related language'
            END AS language_group,
+           coalesce(x.pay_f, 0) AS pay_f,
            (f.co_dt_future >= DATE '2025-01-31' AND f.co_dt_future < DATE '2025-09-30') AS co_8m,
            (f.co_dt_future >= DATE '2025-01-31' AND f.co_dt_future < DATE '2025-11-30') AS co_10m,
            (f.co_dt_future >= DATE '2025-01-31' AND f.co_dt_future < DATE '2026-01-31') AS co_12m,
-           (k.any_captured = 0 AND k.any_leaked_intent = 1) AS leaked_intent_acct
+           f.co_amt
     FROM ep e
+    LEFT JOIN tx x ON x.contactid = e.contactid
     LEFT JOIN future_co f ON trim(cast(f.extnl_acct_id AS varchar)) = e.acct_key
-    LEFT JOIN caller k ON e.acct_key = k.acct_key
 ),
-acct_group AS (
+-- account-level flags via window functions over esig (NO second transcript touch):
+-- any_captured and any_leaked_intent (captured=0 AND pay_f>0 on some episode).
+esig_acct AS (
+    SELECT acct_key, contactid, captured, language_group, co_8m, co_10m, co_12m, co_amt,
+           max(captured) OVER (PARTITION BY acct_key) AS any_captured,
+           max(CASE WHEN captured = 0 AND pay_f > 0 THEN 1 ELSE 0 END)
+               OVER (PARTITION BY acct_key) AS any_leaked_intent
+    FROM esig
+),
+ep2 AS (
+    SELECT acct_key, captured, language_group, co_8m, co_10m, co_12m, co_amt,
+           (any_captured = 0 AND any_leaked_intent = 1) AS leaked_intent_acct
+    FROM esig_acct
+),
+acct_group AS (   -- dedup to one row per (language_group, acct_key)
     SELECT language_group, acct_key,
            bool_or(co_8m)  AS acct_co_8m,
            bool_or(co_10m) AS acct_co_10m,
