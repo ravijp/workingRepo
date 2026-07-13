@@ -12,6 +12,13 @@
 -- verbatim; the language partition is lx1's v2 priority CASE verbatim
 -- (deceased or estate first, then promise, payment talk, plan, hardship,
 -- dispute, none). ONE transcript pass, aggregates only.
+-- RESOURCE FIX (keeper, 2026-07-13, after "exhausted resources at this
+-- scale factor"): v1 stacked b17's 8-month whole-book daily snapshot join
+-- AND b14's whole-book payment window function in one query. Fix: the
+-- episode CTEs moved to the TOP of the WITH chain, and both whole-book
+-- account scans (snap, pay_snap) now semi-join to the January episode
+-- accounts before anything heavy runs. Logic unchanged: accounts with no
+-- January inbound episode contributed nothing to the output.
 -- Omitted vs b17: the last_current_dt column and the spell CTE (days-since-
 -- delinquent bands are not part of b19's output; nothing else consumes them).
 -- Kept: episodes whose call-day snapshot shows bucket = 1 (bucket-1-at-call
@@ -23,64 +30,7 @@
 -- keeper. Language-group x captured cells partition the total EXACTLY;
 -- deceased episodes never appear inside intent groups (by construction of
 -- the priority CASE); distinct accounts <= episodes in every cell.
-WITH snap AS (
-    SELECT trim(cast(extnl_acct_id AS varchar)) AS acct_key,
-           eff_dt,
-           date(date_parse(eff_dt, '%Y%m%d')) AS snap_dt,
-           CASE
-             WHEN past_due_271_up_amt  > 0 THEN 10
-             WHEN past_due_241_270_amt > 0 THEN 9
-             WHEN past_due_211_240_amt > 0 THEN 8
-             WHEN past_due_181_210_amt > 0 THEN 7
-             WHEN past_due_151_180_amt > 0 THEN 6
-             WHEN past_due_121_150_amt > 0 THEN 5
-             WHEN past_due_91_120_amt  > 0 THEN 4
-             WHEN past_due_61_90_amt   > 0 THEN 3
-             WHEN past_due_31_60_amt   > 0 THEN 2
-             WHEN past_due_1_30_amt    > 0 THEN 1
-             ELSE 0
-           END AS bucket,
-           try_cast(chrgoff_dt AS date) AS co_dt
-    FROM "fmt_acct_dba"."fmt_acct_c"
-    WHERE sfx_nbr = 0
-      AND eff_dt >= '20240601' AND eff_dt < '20250201'
-),
-cpc_monthly AS (
-    SELECT trim(cast(extnl_acct_id AS varchar)) AS acct_key,
-           max_by(clnt_prdct_cd, eff_dt) AS eom_cpc
-    FROM "fmt_acct_dba"."fmt_acct_c"
-    WHERE sfx_nbr = 0
-      AND eff_dt >= '20250101' AND eff_dt < '20250201'
-    GROUP BY 1
-),
-pay_snap AS (
-    SELECT extnl_acct_id, eff_dt,
-           date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
-           coalesce(try_cast(paymt_last_dt AS date),
-                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
-           coalesce(try_cast(atmtc_paymt_last_dt AS date),
-                    try(cast(date_parse(try_cast(atmtc_paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS auto_dt,
-           coalesce(try_cast(nsf_last_paymt_dt AS date),
-                    try(cast(date_parse(try_cast(nsf_last_paymt_dt AS varchar), '%d%b%Y') AS date))) AS nsf_dt
-    FROM "fmt_acct_dba"."fmt_acct_c"
-    WHERE sfx_nbr = 0
-      AND eff_dt >= '20250101' AND eff_dt < '20250301'
-),
-pay_monthly AS (
-    SELECT extnl_acct_id, m,
-           max(pay_dt) AS pay_dt,
-           max(auto_dt) AS auto_dt,
-           max(nsf_dt) AS nsf_dt
-    FROM pay_snap GROUP BY 1, 2
-),
-pay_monthly2 AS (
-    SELECT extnl_acct_id, m, pay_dt, auto_dt, nsf_dt,
-           lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt,
-           lead(auto_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_auto_dt,
-           lead(nsf_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_nsf_dt
-    FROM pay_monthly
-),
-inb AS (
+WITH inb AS (
     SELECT trim(cast(acctid AS varchar)) AS acct_key, contactid,
            "date" AS call_dt, initiationtimestamp
     FROM "contactcenter_bdp_db"."call"
@@ -101,6 +51,15 @@ episodes AS (
     )
     WHERE rn = 1
 ),
+cpc_monthly AS (
+    SELECT trim(cast(extnl_acct_id AS varchar)) AS acct_key,
+           max_by(clnt_prdct_cd, eff_dt) AS eom_cpc
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20250101' AND eff_dt < '20250201'
+      AND trim(cast(extnl_acct_id AS varchar)) IN (SELECT acct_key FROM episodes)
+    GROUP BY 1
+),
 episodes_exaa AS (
     SELECT e.acct_key, e.contactid, e.call_dt, e.call_month
     FROM episodes e
@@ -110,6 +69,57 @@ episodes_exaa AS (
                                  'AA3','AC3','AM3','AA4','AC4','AM4',
                                  'BGC','BGM','CGM','GMR',
                                  'FBS','IBS','U1C','U2C','U3C'))
+),
+snap AS (
+    SELECT trim(cast(extnl_acct_id AS varchar)) AS acct_key,
+           eff_dt,
+           date(date_parse(eff_dt, '%Y%m%d')) AS snap_dt,
+           CASE
+             WHEN past_due_271_up_amt  > 0 THEN 10
+             WHEN past_due_241_270_amt > 0 THEN 9
+             WHEN past_due_211_240_amt > 0 THEN 8
+             WHEN past_due_181_210_amt > 0 THEN 7
+             WHEN past_due_151_180_amt > 0 THEN 6
+             WHEN past_due_121_150_amt > 0 THEN 5
+             WHEN past_due_91_120_amt  > 0 THEN 4
+             WHEN past_due_61_90_amt   > 0 THEN 3
+             WHEN past_due_31_60_amt   > 0 THEN 2
+             WHEN past_due_1_30_amt    > 0 THEN 1
+             ELSE 0
+           END AS bucket,
+           try_cast(chrgoff_dt AS date) AS co_dt
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20240601' AND eff_dt < '20250201'
+      AND trim(cast(extnl_acct_id AS varchar)) IN (SELECT acct_key FROM episodes_exaa)
+),
+pay_snap AS (
+    SELECT extnl_acct_id, eff_dt,
+           date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
+           coalesce(try_cast(paymt_last_dt AS date),
+                    try(cast(date_parse(try_cast(paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS pay_dt,
+           coalesce(try_cast(atmtc_paymt_last_dt AS date),
+                    try(cast(date_parse(try_cast(atmtc_paymt_last_dt AS varchar), '%d%b%Y') AS date))) AS auto_dt,
+           coalesce(try_cast(nsf_last_paymt_dt AS date),
+                    try(cast(date_parse(try_cast(nsf_last_paymt_dt AS varchar), '%d%b%Y') AS date))) AS nsf_dt
+    FROM "fmt_acct_dba"."fmt_acct_c"
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '20250101' AND eff_dt < '20250301'
+      AND trim(cast(extnl_acct_id AS varchar)) IN (SELECT acct_key FROM episodes_exaa)
+),
+pay_monthly AS (
+    SELECT extnl_acct_id, m,
+           max(pay_dt) AS pay_dt,
+           max(auto_dt) AS auto_dt,
+           max(nsf_dt) AS nsf_dt
+    FROM pay_snap GROUP BY 1, 2
+),
+pay_monthly2 AS (
+    SELECT extnl_acct_id, m, pay_dt, auto_dt, nsf_dt,
+           lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt,
+           lead(auto_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_auto_dt,
+           lead(nsf_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_nsf_dt
+    FROM pay_monthly
 ),
 callday AS (
     SELECT e.acct_key, e.call_dt,

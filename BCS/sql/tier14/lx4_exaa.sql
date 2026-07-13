@@ -7,6 +7,15 @@
 -- for ex-AA account-months. NULL-safe form: NULL or blank cpc is kept as
 -- "others". Transcript CTEs (tx) are untouched; one-pass discipline stands.
 -- RUN LAST (heaviest query; after all other tier-14 files tie out).
+-- RESOURCE FIX (keeper, 2026-07-13, after "exhausted resources at this
+-- scale factor"): the original scanned the WHOLE BOOK (45M accounts x 20
+-- months of daily snapshots) into the monthly window functions; with the
+-- added cpc column that no longer fit. Fix: the call CTEs (inb, episodes)
+-- moved to the TOP of the WITH chain, and snap now semi-joins to the
+-- accounts that placed at least one inbound call in the W3 window (~6M).
+-- Logic unchanged: the account side is consumed ONLY via the join to
+-- episodes, and both window functions partition per account, so removing
+-- never-calling accounts cannot change any output row.
 -- Expected tie-outs (pre-registered, per the keeper's scope note): every
 -- month's episodes/matched/delinquent/with_transcript/pay_language/
 -- no_payment_30d/chargeoff_8m and the six lx4_ columns are all
@@ -25,7 +34,27 @@
 -- cumulative gate ladder (deepest 2-8), the raw-payment 30-day gate (no
 -- autopay/NSF exclusion, matching f2 not f1), the deceased and execution
 -- lexicons, and the eight-plus-six output columns.
-WITH snap AS (
+WITH inb AS (
+    SELECT trim(cast(acctid AS varchar)) AS acct_key, contactid,
+           "date" AS call_dt, initiationtimestamp
+    FROM "contactcenter_bdp_db"."call"
+    WHERE initiationmethod = 'INBOUND'
+      AND "date" >= DATE '2024-07-01' AND "date" < DATE '2025-07-01'
+      AND effdt >= '2024-07-01' AND effdt < '2025-07-02'
+),
+episodes AS (
+    SELECT acct_key, contactid, call_dt,
+           cast(date_trunc('month', call_dt) AS date) AS call_month
+    FROM (
+        SELECT acct_key, contactid, call_dt,
+               row_number() OVER (PARTITION BY acct_key, call_dt
+                                  ORDER BY initiationtimestamp) AS rn
+        FROM inb
+        WHERE acct_key IS NOT NULL AND acct_key <> ''
+    )
+    WHERE rn = 1
+),
+snap AS (
     SELECT extnl_acct_id,
            date_trunc('month', date(date_parse(eff_dt, '%Y%m%d'))) AS m,
            CASE
@@ -51,6 +80,7 @@ WITH snap AS (
       AND date(date_parse(eff_dt, '%Y%m%d')) >= DATE '2024-07-01'
       AND date(date_parse(eff_dt, '%Y%m%d')) < DATE '2026-03-01'
       AND eff_dt >= '20240701' AND eff_dt < '20260301'
+      AND trim(cast(extnl_acct_id AS varchar)) IN (SELECT acct_key FROM episodes)
 ),
 monthly AS (
     SELECT extnl_acct_id, m, max(bucket) AS bucket, min(co_dt) AS co_dt,
@@ -63,26 +93,6 @@ monthly2 AS (
            min(co_dt) OVER (PARTITION BY extnl_acct_id) AS acct_co_dt,
            lead(pay_dt) OVER (PARTITION BY extnl_acct_id ORDER BY m) AS next_pay_dt
     FROM monthly
-),
-inb AS (
-    SELECT trim(cast(acctid AS varchar)) AS acct_key, contactid,
-           "date" AS call_dt, initiationtimestamp
-    FROM "contactcenter_bdp_db"."call"
-    WHERE initiationmethod = 'INBOUND'
-      AND "date" >= DATE '2024-07-01' AND "date" < DATE '2025-07-01'
-      AND effdt >= '2024-07-01' AND effdt < '2025-07-02'
-),
-episodes AS (
-    SELECT acct_key, contactid, call_dt,
-           cast(date_trunc('month', call_dt) AS date) AS call_month
-    FROM (
-        SELECT acct_key, contactid, call_dt,
-               row_number() OVER (PARTITION BY acct_key, call_dt
-                                  ORDER BY initiationtimestamp) AS rn
-        FROM inb
-        WHERE acct_key IS NOT NULL AND acct_key <> ''
-    )
-    WHERE rn = 1
 ),
 matched AS (
     SELECT e.acct_key, e.contactid, e.call_dt, e.call_month,
