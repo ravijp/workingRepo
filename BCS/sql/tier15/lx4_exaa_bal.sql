@@ -208,7 +208,7 @@ ep AS (
     FROM matched m
     LEFT JOIN tx t ON m.contactid = t.contactid
 )
-SELECT call_month,
+SELECT date_format(call_month, '%Y-%m') AS call_month,  -- formatted, not a raw date/serial
        count(*) AS episodes,
        count_if(deepest >= 3) AS matched,
        count_if(deepest >= 4) AS delinquent,
