@@ -92,14 +92,19 @@ chk("ours only (1b measured)",
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## C3. THE histogram: every call row for the 1,942, ALL TIME, by calendar month
+# MAGIC ## C3. THE histogram: every call row for the 1,942, by calendar month
 # MAGIC
-# MAGIC No date, method, producttype, or effdt filter. If the flag is real, their
-# MAGIC INBOUND calls are SOMEWHERE; this shows where. (Cost note: full call-table
-# MAGIC scan with a broadcast semi-join; the transcript table is the expensive one,
-# MAGIC not this. If it still struggles, bound `date` to 2024-01-01..2026-01-01.)
+# MAGIC No date, method, or producttype filter. effdt IS bounded, on principle:
+# MAGIC the export that built the flag was created 2026-07-10 (CQ-11 contents), so
+# MAGIC every row it could have seen has effdt < 2026-07-10; the lower bound
+# MAGIC 2024-12-01 predates every call date in play. This keeps the probe complete
+# MAGIC for the question while staying off the table's LIVE loading edge (the
+# MAGIC 2026-07-15+ partitions change underneath a scan: FAILED_READ_FILE on the
+# MAGIC first attempt). REFRESH TABLE first clears the stale file listing.
 
 # COMMAND ----------
+
+spark.sql(f"REFRESH TABLE {CALL_TABLE}")
 
 spark.sql(f"""
     CREATE OR REPLACE TEMP VIEW gap_all AS
@@ -110,6 +115,7 @@ spark.sql(f"""
            cast(c.producttype AS string) AS producttype
     FROM {CALL_TABLE} c
     JOIN flagged_only g ON g.acct_key = trim(cast(c.acctid AS string))
+    WHERE c.effdt >= '2024-12-01' AND c.effdt < '2026-07-10'
 """)
 
 print("All rows by calendar month x method:")
