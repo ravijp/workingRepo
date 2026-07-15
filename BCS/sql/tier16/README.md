@@ -1,5 +1,12 @@
 # Tier 16: the layered UC2 query kit
 
+RUN STATE (updated 2026-07-16): first run COMPLETE on DATABRICKS (Mode 1,
+Unity Catalog tables `uc2_t16_00_...` to `_04_outcomes`); every section-6
+anchor reproduced (repo record: bridge-round10-tier16-databricks-2026-07-16).
+The kit has never run on Athena; an Athena run re-triggers the section-6
+anchor sweep before anything new is read. Not yet run anywhere: insights
+5.2, 5.3, 6.3, 6.4.
+
 Five layer files that build on each other, like the SAS 00/01/02 program chain
 but with clean layer boundaries, plus five insight files that reproduce every
 AWS-side number and table in the technical walkthrough
