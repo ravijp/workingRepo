@@ -1,6 +1,6 @@
 # UC2 Phase-2 Databricks package: the SAS-spine pipeline
 
-Seven notebook-source files. Population, delinquency, and dollars come from
+Nine notebook-source files. Population, delinquency, and dollars come from
 the client's SAS 003-program export; the AWS call and transcript tables stay
 the sole conversation source; the call-join key is numeric everywhere. Every
 file runs alone, pasted as ONE cell or imported as a notebook (no %run).
@@ -15,6 +15,8 @@ file runs alone, pasted as ONE cell or imported as a notebook (no %run).
 | 4 | `B_sas_base/B02b_outcomes_sas.py` | `uc2_t16_04s_outcomes_<vintage>` | 01s + the n-layers |
 | 5a | `B_sas_base/B03_insights_sas.py` | nothing (reads 01s/04s) | 01s + 04s |
 | 5b | `B_sas_base/B04_copilot_export_sas.py` | nothing (temp views + the export grid) | 04s + transcript |
+| 5c | `B_sas_base/B05_scale_pools_probe.py` | nothing (read-only probe: scale-campaign pools + the contact-center summary/category coverage) | 04s + 03n + transcript (+ summary/category if reachable) |
+| 5d | `B_sas_base/B06_copilot_labels_ingest.py` | `uc2_copilot_excerpt_map`, `uc2_copilot_labels` (assistant responses become data) | 04s + transcript (map replay); then paste-per-response |
 
 `B_sas_base/B00_setup.py` is the CANONICAL COPY of the SETUP block inlined at
 the top of every B file. Edit it there, then re-paste into every B file.
@@ -22,10 +24,13 @@ the top of every B file. Edit it there, then re-paste into every B file.
 **Parallelism: the chain 1 -> 2 -> 3 -> 4 is STRICTLY SEQUENTIAL** (each step
 writes tables the next step reads, and each file's precondition cell
 hard-fails if its inputs are missing, so a wrong order stops loud, never
-silently). **Only B03 and B04 can run in parallel** (step 5a and 5b): both
-only read 01s/04s; their concurrent appends to `uc2_run_metrics` are safe
-(Delta). Do not run two BUILDER notebooks at once even on different clusters:
-they CREATE OR REPLACE the same table names.
+silently). **B03, B04, and B05 can run in parallel** (steps 5a-5c): they
+only read 01s/04s/03n; their concurrent appends to `uc2_run_metrics` are safe
+(Delta). B06 (5d) also runs any time after B02b, but is a per-response-file
+loop, not a chain step. Do not run two BUILDER notebooks at once even on
+different clusters: they CREATE OR REPLACE the same table names (B06's two
+campaign tables are CREATE IF NOT EXISTS + keyed DELETE/INSERT, so repeat
+runs are safe by design).
 
 ## The rules the package enforces
 
@@ -74,6 +79,12 @@ they CREATE OR REPLACE the same table names.
   (construct x aws day-grain x sas month-grain cross-tab).
 - `uc2_gap1942_202501` / `uc2_sasflag_202501`: the recovered-caller list and
   the CSV-flagged set, persisted for reconciliation.
+- `uc2_copilot_excerpt_map` / `uc2_copilot_labels` (B06): the assistant
+  campaign's data layer - which excerpt id is which contactid/account, and
+  every parsed response line (wave, batch, prompt type, excerpt id, field,
+  value, provenance, parse status). Blocker rates with intervals, second-read
+  agreement, and dollar weighting are all SQL joins from here to 04s/01s; no
+  number ever comes from a reading session.
 - `uc2_run_metrics`: every chk and measured value from every run
   (run_ts, notebook, name, value, expected, status, vintage) - diff any two
   runs on-platform, e.g.
