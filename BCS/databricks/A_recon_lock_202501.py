@@ -39,7 +39,8 @@ CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WA
 CALL_TABLE = "062108867742_glue_connectivity_catalog.contactcenter_bdp_db.`call`"
 ANCHOR_YM = "202501"          # constant here by design; the B files parameterize
 
-FROZEN = False   # flip to True at freeze, after EXPECTED is filled and verified
+FROZEN = True    # frozen 2026-07-16 after the verified first run (Phase2SS_0
+                 # screenshots; every value re-added by hand at verification)
 
 # EXPECTED: every pre-registered value. None = measure mode (fill at freeze).
 EXPECTED = {
@@ -79,12 +80,69 @@ EXPECTED = {
     "1d: jan acctid digits-only rows": 1267227,
     "1d: jan acctid null rows": 481838,
     "1d: jan acctid other-shape rows": 0,
-    # measured at first run, locked at freeze
-    "probe: aws-captured accounts joined to export": None,
-    "probe: of those, negative PAYMT M1 or M2": None,
-    "delta grid": None,   # dict {"construct|aws|sas": accounts} at freeze
-    "csv column count": None,
+    # locked at freeze 2026-07-16 (first verified run). The sign probe
+    # CONFIRMED CQ-7: negatives dominate everywhere; 5,767 of the 6,029
+    # aws-captured accounts (95.7%) show a negative PAYMT M1/M2 - the
+    # remainder is the month-grain re-baseline (payments landing in M3 for
+    # late-January calls, and net monthly amounts offset by reversals).
+    "probe: aws-captured accounts joined to export": 6029,
+    "probe: of those, negative PAYMT M1 or M2": 5767,
+    # NOTE on the flagged-only rows: aws_captured = 0 there is STRUCTURAL,
+    # not behavioral - the 1,942 exist in the round-10 04 table only under
+    # their zero-PADDED string keys (unmatched to any population row), so
+    # the old day-grain payment join could never fire for them.
+    "delta grid": {
+        "a. both|0|False": 2148,
+        "a. both|0|True": 1112,
+        "a. both|1|False": 259,
+        "a. both|1|True": 5675,
+        "b. ours-only (string-keyed)|0|False": 78,
+        "b. ours-only (string-keyed)|0|True": 22,
+        "b. ours-only (string-keyed)|1|False": 3,
+        "b. ours-only (string-keyed)|1|True": 92,
+        "c. flagged-only|0|False": 692,
+        "c. flagged-only|0|True": 1250,
+    },
+    "csv column count": 90,
 }
+
+# The pinned CSV schema (the A5 census of 2026-07-16, 90 columns, exact
+# order). All-string by construction (inferSchema off); the A5 cell asserts
+# the loaded header equals this list exactly - the locked explicit-schema
+# convention as an ordered-list assert.
+CSV_COLUMNS = [
+    "EXTNL_ACCT_ID", "NEW_ROLL_FLAG", "NO_PRIOR_RECORD_FLAG",
+    "DLNQT_CD_M1", "DLNQT_CD_M2", "DLNQT_CD_M3",
+    "DLNQT_BKT_M1", "DLNQT_BKT_M2", "DLNQT_BKT_M3",
+    "PAYMT_AMT_M1", "PAYMT_AMT_M2", "PAYMT_AMT_M3",
+    "CHRGOFF_RVRSL_M1", "CHRGOFF_RVRSL_M2", "CHRGOFF_RVRSL_M3",
+    "CHRGOFF_AMT_M1", "CHRGOFF_AMT_M2", "CHRGOFF_AMT_M3",
+    "GROSS_LOSS_M1", "GROSS_LOSS_M2", "GROSS_LOSS_M3",
+    "PLCY_LOSS_M1", "PLCY_LOSS_M2", "PLCY_LOSS_M3",
+    "CR_LMT_M1", "CR_LMT_M2", "CR_LMT_M3",
+    "EOP_BAL_M1", "EOP_BAL_M2", "EOP_BAL_M3",
+    "CHRGOFF_RSN_M1", "CHRGOFF_RSN_M2", "CHRGOFF_RSN_M3",
+    "cpc_M1", "cpc_M2", "cpc_M3",
+    "ECL_M1", "ECL_M2", "ECL_M3",
+    "ECL_12MO_M1", "ECL_12MO_M2", "ECL_12MO_M3",
+    "ECL_LIFTM_M1", "ECL_LIFTM_M2", "ECL_LIFTM_M3",
+    "STG_CD_M1", "STG_CD_M2", "STG_CD_M3",
+    "WRITE_OFF_M1", "WRITE_OFF_M2", "WRITE_OFF_M3",
+    "CO_CURRENT_FLAG", "CO_8M_FLAG", "CO_10M_FLAG", "CO_12M_FLAG",
+    "REAGE_EVER_FLAG",
+    "GROSS_LOSS_8M_AMT", "GROSS_LOSS_10M_AMT", "GROSS_LOSS_12M_AMT",
+    "CHRGOFF_8M_AMT", "CHRGOFF_10M_AMT", "CHRGOFF_12M_AMT",
+    "PLCY_LOSS_8M_AMT", "PLCY_LOSS_10M_AMT", "PLCY_LOSS_12M_AMT",
+    "imp_M0", "ECL_M0", "ECL_12MO_M0", "ECL_LIFTM_M0", "STG_CD_M0", "WRITE_OFF_M0",
+    "imp_M4", "ECL_M4", "ECL_12MO_M4", "ECL_LIFTM_M4", "STG_CD_M4", "WRITE_OFF_M4",
+    "CPC_FLAG_NW",
+    "hram_flag_refit_M1", "hram_flag_apollo_M1",
+    "hram_flag_refit_M2", "hram_flag_apollo_M2",
+    "hram_flag_refit_M3", "hram_flag_apollo_M3",
+    "chrgoff_amt_lftm", "GROSS_LOSS_AMT_LFTM", "chrgoff_val_flag",
+    "call_type_CLBCK", "call_type_INB", "call_type_TRSFR",
+]
+assert len(CSV_COLUMNS) == 90
 
 # COMMAND ----------
 
@@ -285,6 +343,11 @@ print(f"CSV columns: {len(_cols)} (one per line, transcribe in order)")
 for i, c in enumerate(_cols, 1):
     print(f"  {i:3}  {c}")
 chk("csv column count", len(_cols), EXPECTED["csv column count"])
+# frozen 2026-07-16: the header must equal the pinned census exactly
+assert _cols == CSV_COLUMNS, (
+    "CSV SCHEMA DRIFT: the loaded header differs from the pinned A5 census - STOP. "
+    f"first difference at position {next(i for i, (a, b) in enumerate(zip(_cols + ['<end>'], CSV_COLUMNS + ['<end>'])) if a != b) + 1}")
+print("PASS  csv header equals the pinned 90-column census exactly")
 
 # the columns THIS notebook uses must exist now (B01's fuller list pins later)
 _required = ["EXTNL_ACCT_ID", "DLNQT_CD_M1", "CPC_FLAG_NW", "CHRGOFF_RSN_M1",
@@ -555,6 +618,14 @@ print("STOP AND INVESTIGATE before any captured_sas number is read anywhere.")
 # MAGIC NULL for the 1,942 our string join never saw). captured_sas = the
 # MAGIC month-grain account-grain gate (CQ-7 convention). This table is the ONLY
 # MAGIC place the two gates ever meet; neither is a denominator here.
+# MAGIC
+# MAGIC READ NOTE (verified 2026-07-16): on the 'c. flagged-only' rows,
+# MAGIC aws_captured = 0 is STRUCTURAL, not behavioral. The 1,942 exist in the
+# MAGIC round-10 04 table only under their zero-PADDED string keys (kept by the
+# MAGIC NULL-safe ex-AA rule with no population row), and the numeric cast in
+# MAGIC the aws join below finds those rows; but the old day-grain payment join
+# MAGIC keyed on the padded strings could never match fmt, so their gate could
+# MAGIC never fire. Do not read their aws_captured as a measured non-capture.
 
 # COMMAND ----------
 

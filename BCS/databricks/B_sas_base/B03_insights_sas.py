@@ -115,42 +115,66 @@ EXPECTED = {
         "hist ledger episodes (string key)": 11262,
         "hist callday b1 stream": 29114,
         # ---- measured then locked (None = measure mode) ----
-        # B02 (key fix)
-        "ledger callers (numeric key)": None,
-        "ledger episodes (numeric key)": None,
-        "addressable episodes (callday b1 stream)": None,
-        "addressable work list episodes": None,
-        "addressable work list accounts": None,
-        "language partition": None,          # dict {group: episodes} at lock
-        "caller classes (aws gate)": None,   # dict {class: accounts} at lock
-        "W strict leaked accounts": None,
-        "W deceased routed": None,
-        "W accounts": None,
-        "W balance": None,
-        "gained callers": None,
-        "gap1942 recovered": None,
-        "gained outside 1942": None,
-        "flagged overlap (202501 recon)": None,
-        # B01 (spine)
-        "inb_native 01 total": None,
-        "inb_native 02 dq1": None,
-        "inb_native 03 +cpc": None,
-        "inb_native 04 ledger": None,
-        "captured_sas all": None,
-        "captured_sas ledger": None,
-        "ledger eop_bal_m1 sum": None,
-        "ledger ecl_m1 sum": None,
-        # B02b (outcomes)
-        "04s episodes": None,
-        "04s callers": None,
-        "04s captured_sas accounts": None,
-        "04s leaked_sas accounts": None,
-        "04s W_s accounts": None,
-        # B03 (insights)
-        "funnel called (inb_native, ledger)": None,
-        "funnel callers with episodes": None,
-        "funnel intent accounts": None,
-        "funnel leaked accounts": None,
+        # B02 (key fix) - LOCKED 2026-07-16 from the verified first run
+        # (Phase2SS_0 screenshots; every arithmetic tie re-added by hand:
+        # 9,389 + 1,958 = 11,347; 1,942 + 16 = 1,958; overlap 9,194 + 1,942
+        # = 11,136; classes re-add to 189,146 and $457,943,985; language
+        # re-adds to 13,788)
+        "ledger callers (numeric key)": 11347,
+        "ledger episodes (numeric key)": 13788,
+        "addressable episodes (callday b1 stream)": 36594,
+        "addressable work list episodes": 2709,
+        "addressable work list accounts": 2543,
+        "language partition": {
+            "a. deceased or estate": 534,
+            "b. future-dated promise": 1725,
+            "c. payment talk, no promise": 6185,
+            "d. plan or settlement talk": 511,
+            "e. hardship talk": 99,
+            "f. dispute or fraud talk": 306,
+            "g. no payment-related language": 4428,
+        },
+        "caller classes (aws gate)": {
+            "a. non-caller": 177799,
+            "b. captured (>= 1 paid-30d episode)": 7101,
+            "c. leaked-intent (intent, no payment 30d)": 2451,
+            "d. other-caller": 1795,
+        },
+        "W strict leaked accounts": 2451,
+        "W deceased routed": 172,
+        "W accounts": 2279,
+        "W balance": 9277926,
+        "gained callers": 1958,
+        "gap1942 recovered": 1942,
+        "gained outside 1942": 16,
+        "flagged overlap (202501 recon)": 11136,
+        # B01 (spine) - LOCKED 2026-07-16 from the verified first run.
+        # The one-time tie-out was PERFECTLY DIAGONAL: inb_native equals the
+        # CSV flag on all 610,183 accounts (575,949 + 34,234; ledger
+        # 174,877 + 11,136), so the CSV flag is retired and the native
+        # ladder happens to equal the old CSV ladder exactly.
+        "inb_native 01 total": 34234,
+        "inb_native 02 dq1": 12615,
+        "inb_native 03 +cpc": 11289,
+        "inb_native 04 ledger": 11136,
+        "captured_sas all": 278885,
+        "captured_sas ledger": 125275,
+        "ledger eop_bal_m1 sum": 452444591,
+        "ledger ecl_m1 sum": 93543576,
+        # B02b (outcomes) - LOCKED 2026-07-16 (8,037 + 1,801 + 1,298 other
+        # = 11,136; W_s = 1,801 - 155 routed = 1,646)
+        "04s episodes": 13486,
+        "04s callers": 11136,
+        "04s captured_sas accounts": 8037,
+        "04s leaked_sas accounts": 1801,
+        "04s W_s accounts": 1646,
+        # B03 (insights) - LOCKED 2026-07-16 (funnel steps 2 and 3 are both
+        # 11,136: a MEASURED equality - every native caller in the SAS
+        # ledger has a standard episode - not an a-priori identity)
+        "funnel called (inb_native, ledger)": 11136,
+        "funnel callers with episodes": 11136,
+        "funnel intent accounts": 7459,
+        "funnel leaked accounts": 1801,
     },
 }
 assert ANCHOR_YM in EXPECTED, f"no expectations recorded for vintage {ANCHOR_YM} - STOP (add a reviewed EXPECTED block first)"
