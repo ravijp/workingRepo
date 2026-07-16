@@ -427,8 +427,10 @@ _r = spark.sql(f"""
     FROM {OUT} o
     LEFT JOIN tx_exists w ON w.contactid = o.contactid
 """).first()
-chk("04s episodes with transcript", _r["episodes_with_tx"], None)
-chk("04s accounts with >= 1 transcript episode", _r["accounts_with_tx"], None)
+# LOCKED 2026-07-16 from the verified first run (phase3-scale-pools record):
+# derived from locked tables + the bounded Jan transcript window, so stable
+chk("04s episodes with transcript", _r["episodes_with_tx"], 12397)
+chk("04s accounts with >= 1 transcript episode", _r["accounts_with_tx"], 10285)
 print(f"note: the R (random) stratum samples from the {fmt(_r['episodes_with_tx'])} "
       f"transcript-backed episodes of {fmt(_r['episodes'])} total")
 
@@ -522,15 +524,17 @@ grid("scale-round pools with export dollars (money within-row ONLY)", spark.sql(
     + "\n) ORDER BY ord"
 ))
 
-for _label, _pred, _name in [
-    ("A-exec", "a_raw_f = 1 AND exec_f = 1", "A-exec pool"),
-    ("A-promise", "a_raw_f = 1 AND promise_f = 1", "A-promise pool"),
-    ("G-relaxed", "language_group = 'g. no payment-related language' AND NOT captured_sas AND tx_f = 1", "relaxed-G pool"),
-    ("K", "captured_sas AND pay_f > 0", "captured contrast pool"),
+# pool sizes LOCKED 2026-07-16 from the verified first run
+# (phase3-scale-pools record); a miss = the substrate moved, STOP
+for _pred, _name, _exp_e, _exp_a in [
+    ("a_raw_f = 1 AND exec_f = 1", "A-exec pool", 95, 88),
+    ("a_raw_f = 1 AND promise_f = 1", "A-promise pool", 313, 300),
+    ("language_group = 'g. no payment-related language' AND NOT captured_sas AND tx_f = 1", "relaxed-G pool", 1125, 953),
+    ("captured_sas AND pay_f > 0", "captured contrast pool", 6496, 5658),
 ]:
     _r = spark.sql(f"SELECT count(*) AS e, count(DISTINCT acct_key) AS a FROM p04 WHERE {_pred}").first()
-    chk(f"{_name} episodes", _r["e"], None)
-    chk(f"{_name} accounts", _r["a"], None)
+    chk(f"{_name} episodes", _r["e"], _exp_e)
+    chk(f"{_name} accounts", _r["a"], _exp_a)
 
 # the relax factor, visible: what dropping the M2 gate adds, by M2 state
 grid("relaxed-G by DLNQT_CD_M2 (the dropped gate, made visible)", spark.sql("""
