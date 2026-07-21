@@ -1,13 +1,16 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # B03_checks - run ONCE after B03_insights_sas.py to certify.
+# MAGIC # B03_checks - run ONCE after B03_insights_sas.py.
 # MAGIC
-# MAGIC Re-reads the SAS spine (01s) and the 04s episode table and asserts the
-# MAGIC locked B03 funnel: accounts called in January (inb_native, in the SAS
-# MAGIC ledger), accounts with standard episodes, accounts with payment language,
-# MAGIC and leaked_sas accounts. Funnel steps 2 and 3 are both 11,136: a MEASURED
-# MAGIC equality (every native caller in the SAS ledger has a standard episode),
-# MAGIC not an a-priori identity. A miss STOPS. Rebuilds no logic.
+# MAGIC RE-ANCHOR NOTE (2026-07-21): SPLIT like B02.
+# MAGIC   RAISING (a miss STOPS): funnel step 1 "called (inb_native, ledger)" reads
+# MAGIC   the 01s spine (the native caller flag), which is PRE-re-anchor and
+# MAGIC   frame-independent - it stays 11,136.
+# MAGIC   MEASURE MODE (never STOPS): steps 2-4 (callers-with-episodes, intent,
+# MAGIC   leaked) read the re-anchored 04s, so they MOVE. In January steps 1 and 2
+# MAGIC   were equal (11,136 = 11,136); after the re-anchor step 2 DROPS below step
+# MAGIC   1 (some native callers had only out-of-window episodes) - that divergence
+# MAGIC   is informative, not a defect. Reported vs the January reference.
 
 # COMMAND ----------
 
@@ -24,6 +27,7 @@ def fmt(v):
 
 
 def chk(name, actual, expected, tol=0, ctx=None):
+    """RAISING - frame-independent anchor. A miss STOPS."""
     if expected is None:
         print(f"MEASURED  {name} = {fmt(actual)}")
         return
@@ -35,6 +39,12 @@ def chk(name, actual, expected, tol=0, ctx=None):
         raise AssertionError(f"ANCHOR MISS {name}: got {fmt(actual)}, expected {fmt(expected)}"
                              + (f" (tol {tol})" if tol else ""))
     print(f"PASS  {name} = {fmt(actual)}")
+
+
+def shift(name, actual, ref):
+    """MEASURE MODE - frame-dependent count that moves under the re-anchor."""
+    d = actual - ref
+    print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")
 
 # COMMAND ----------
 
@@ -71,9 +81,13 @@ _s = spark.sql(f"""
            count(DISTINCT CASE WHEN leaked_sas THEN acct_key END) AS leaked_accts
     FROM {OUT}
 """).first()
+# step 1: reads the 01s spine (native caller flag), pre-re-anchor -> RAISING
 chk("funnel called (inb_native, ledger)", _r["called"], E["funnel called (inb_native, ledger)"])
-chk("funnel callers with episodes", _s["ep_callers"], E["funnel callers with episodes"])
-chk("funnel intent accounts", _s["intent_accts"], E["funnel intent accounts"])
-chk("funnel leaked accounts", _s["leaked_accts"], E["funnel leaked accounts"])
+# steps 2-4: read the re-anchored 04s -> MEASURE vs the Jan reference
+shift("funnel callers with episodes (statement frame)", _s["ep_callers"], E["funnel callers with episodes"])
+shift("funnel intent accounts (statement frame)", _s["intent_accts"], E["funnel intent accounts"])
+shift("funnel leaked accounts (statement frame)", _s["leaked_accts"], E["funnel leaked accounts"])
 
-print("B03_checks: ALL PASS - the lean B03 build is certified equivalent to the locked original.")
+print("B03_checks: DONE. Step-1 'called' (frame-independent) asserted and PASS if "
+      "reached here. Steps 2-4 reported vs the January reference - they move under "
+      "the re-anchor (step 2 drops below step 1; that divergence is expected).")

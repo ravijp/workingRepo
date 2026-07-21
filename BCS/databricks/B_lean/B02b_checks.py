@@ -1,13 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # B02b_checks - run ONCE after B02b_outcomes_sas.py to certify.
+# MAGIC # B02b_checks - run ONCE after B02b_outcomes_sas.py.
 # MAGIC
-# MAGIC Re-reads uc2_t16_04s_outcomes_<vintage> (the 04s episode table B02b built)
-# MAGIC and asserts the locked O3 summary: standard January episodes, the callers
-# MAGIC behind them, and the account-grain captured_sas / leaked_sas / W_s counts.
-# MAGIC captured_sas is ACCOUNT grain, month grain (CQ-7); classes are account
-# MAGIC level. leaked_sas = NOT captured_sas AND >= 1 payment-language episode; W_s
-# MAGIC = leaked_sas AND non-deceased. A miss STOPS. Rebuilds no logic.
+# MAGIC Re-reads uc2_t16_04s_outcomes_<vintage> (the 04s episode table B02b built).
+# MAGIC
+# MAGIC RE-ANCHOR NOTE (2026-07-21): 04s is now built on the STATEMENT-WINDOW
+# MAGIC episode set (only call-days in [stmt_dt, stmt_dt+56) survive). Every count
+# MAGIC below is conditioned on that in-window caller population, so ALL FIVE are
+# MAGIC EXPECTED TO MOVE off the January-frame locked values. They are therefore
+# MAGIC printed in MEASURE MODE (fresh value + the old January reference), NOT as
+# MAGIC raising asserts. A moved count here is the re-anchor working, not a defect.
+# MAGIC The frame-INDEPENDENT anchors (population 204,323 / 189,146, the dollar and
+# MAGIC captured_sas/leaked_sas/W_s gate MATH) are asserted in B02_checks, on the
+# MAGIC account-grain layers that the window filter does not touch.
+# MAGIC captured_sas is ACCOUNT grain, month grain (CQ-7). leaked_sas = NOT
+# MAGIC captured_sas AND >= 1 payment-language episode; W_s = leaked_sas AND
+# MAGIC non-deceased. This file STOPS on nothing; it reports the shift.
 
 # COMMAND ----------
 
@@ -44,15 +52,22 @@ ANCHOR_YM = "202501"
 DB = f"{CATALOG}.{SCHEMA}"
 OUT = f"{DB}.uc2_t16_04s_outcomes_{ANCHOR_YM}"
 
-E = {
-    # B02b (outcomes) - LOCKED 2026-07-16 (8,037 + 1,801 + 1,298 other = 11,136;
-    # W_s = 1,801 - 155 routed = 1,646)
+# January-frame REFERENCE values (pre-re-anchor, round-12 record). NOT asserted;
+# printed next to the fresh statement-frame value so the shift is visible.
+REF_JAN = {
     "04s episodes": 13486,
     "04s callers": 11136,
     "04s captured_sas accounts": 8037,
     "04s leaked_sas accounts": 1801,
     "04s W_s accounts": 1646,
 }
+
+
+def shift(name, actual, ref):
+    """measure-mode: print the fresh statement-frame value + the Jan reference
+    and the delta. Never raises (these counts move by design)."""
+    d = actual - ref
+    print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")
 
 # COMMAND ----------
 
@@ -68,10 +83,12 @@ _r = spark.sql(f"""
            count(DISTINCT CASE WHEN w_s_flag     THEN acct_key END) AS w_s_accts
     FROM {OUT}
 """).first()
-chk("04s episodes", _r["episodes"], E["04s episodes"])
-chk("04s callers", _r["callers"], E["04s callers"])
-chk("04s captured_sas accounts", _r["captured_accts"], E["04s captured_sas accounts"])
-chk("04s leaked_sas accounts", _r["leaked_accts"], E["04s leaked_sas accounts"])
-chk("04s W_s accounts", _r["w_s_accts"], E["04s W_s accounts"])
+shift("04s episodes", _r["episodes"], REF_JAN["04s episodes"])
+shift("04s callers", _r["callers"], REF_JAN["04s callers"])
+shift("04s captured_sas accounts", _r["captured_accts"], REF_JAN["04s captured_sas accounts"])
+shift("04s leaked_sas accounts", _r["leaked_accts"], REF_JAN["04s leaked_sas accounts"])
+shift("04s W_s accounts", _r["w_s_accts"], REF_JAN["04s W_s accounts"])
 
-print("B02b_checks: ALL PASS - the lean B02b build is certified equivalent to the locked original.")
+print("B02b_checks: statement-frame counts reported vs the January reference. "
+      "These move by design (the re-anchor filters to in-window episodes); this "
+      "file asserts nothing. Frame-independent anchors are in B02_checks.")

@@ -1,14 +1,25 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # B02_checks - run ONCE after B02_keyfix_aws_layers.py to certify.
+# MAGIC # B02_checks - run ONCE after B02_keyfix_aws_layers.py.
 # MAGIC
-# MAGIC Re-reads the n-layers (00n/01n/02n/03n/04n), the round-10 string-keyed
-# MAGIC tables, the fmt/call sources, and notebook A's persisted recon tables. Runs
-# MAGIC the fmt-side key probe, the population anchor sweep, the call-table evidence
-# MAGIC ties, the re-anchor (implication stop-rules + measured locked values,
-# MAGIC language partition, caller classes, W steps), and the 202501 recovery
-# MAGIC reconciliation (gained / recovered / shortfall-cause / flagged-overlap
-# MAGIC arithmetic). A miss STOPS. Rebuilds no layer.
+# MAGIC RE-ANCHOR NOTE (2026-07-21): the checks in this file are SPLIT.
+# MAGIC
+# MAGIC   RAISING (still assert; a miss STOPS) - the FRAME-INDEPENDENT anchors,
+# MAGIC   built on 00n/01n/fmt/call, which the statement-window episode filter does
+# MAGIC   NOT touch: K2 fmt key probe, K4 population sweep (204,323 / 189,146 /
+# MAGIC   ex-AA balance / touched_b1 + class split), K5 call-table key probe. If any
+# MAGIC   of these moves, it is a REAL defect - investigate.
+# MAGIC
+# MAGIC   MEASURE MODE (report vs the January reference; never STOPS) - the
+# MAGIC   FRAME-DEPENDENT numbers, built on the re-anchored 02n/04n episode set:
+# MAGIC   ledger callers/episodes, the addressable stream, the work list, the
+# MAGIC   language partition, caller classes, W steps, and the whole K9r recovery
+# MAGIC   reconciliation. These MOVE by design (only in-window episodes survive), so
+# MAGIC   asserting the January values would false-STOP. In particular the "dropped
+# MAGIC   old callers = 0" implication no longer holds: the re-anchor deliberately
+# MAGIC   drops out-of-window callers, so that count is now the size of the shift.
+# MAGIC
+# MAGIC Rebuilds no layer.
 
 # COMMAND ----------
 
@@ -28,6 +39,7 @@ def fmt(v):
 
 
 def chk(name, actual, expected, tol=0, ctx=None):
+    """RAISING - frame-independent anchors only. A miss STOPS."""
     if expected is None:
         print(f"MEASURED  {name} = {fmt(actual)}")
         return
@@ -39,6 +51,17 @@ def chk(name, actual, expected, tol=0, ctx=None):
         raise AssertionError(f"ANCHOR MISS {name}: got {fmt(actual)}, expected {fmt(expected)}"
                              + (f" (tol {tol})" if tol else ""))
     print(f"PASS  {name} = {fmt(actual)}")
+
+
+def shift(name, actual, ref):
+    """MEASURE MODE - frame-dependent counts that move under the re-anchor.
+    Prints the fresh statement-frame value + the January reference + the delta.
+    Never raises."""
+    if ref is None:
+        print(f"MEASURED  {name} = {fmt(actual)}")
+        return
+    d = actual - ref
+    print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")
 
 # COMMAND ----------
 
@@ -186,33 +209,32 @@ spark.sql(f"""
     WHERE in_ledger_exaa
 """)
 
-# implication 1: no old caller may disappear (numeric normalization cannot unmatch)
-_dropped_df = spark.sql("SELECT o.acct_key FROM _old_callers o LEFT ANTI JOIN _new_callers n ON n.acct_key = o.acct_key")
-chk("dropped old callers (must be zero)", _dropped_df.count(), 0, ctx=_dropped_df)
+# RE-ANCHOR: the "no old caller disappears" implication NO LONGER HOLDS - the
+# statement-window filter deliberately drops out-of-window callers. Report the
+# drop count as the size of the shift (measure mode, never STOPS).
+_dropped = spark.sql("SELECT o.acct_key FROM _old_callers o LEFT ANTI JOIN _new_callers n ON n.acct_key = o.acct_key").count()
+shift("old callers dropped by the re-anchor (out-of-window)", _dropped, 0)
 
-# measured: numeric-keyed ledger callers and episodes (episodes can only grow)
+# frame-dependent: numeric-keyed ledger callers and episodes - MOVE (only
+# in-window episodes survive), report vs the January reference.
 _r = spark.sql(f"""
     SELECT count_if(in_ledger_exaa) AS episodes,
            count(DISTINCT CASE WHEN in_ledger_exaa THEN acct_key END) AS callers
     FROM {DB}.uc2_t16_04n_outcomes
 """).first()
-if _r["episodes"] < E["hist ledger episodes (string key)"]:
-    raise AssertionError(f"IMPLICATION MISS: episodes {fmt(_r['episodes'])} < historical {fmt(E['hist ledger episodes (string key)'])}")
-chk("ledger episodes (numeric key)", _r["episodes"], E["ledger episodes (numeric key)"])
-chk("ledger callers (numeric key)", _r["callers"], E["ledger callers (numeric key)"])
+shift("ledger episodes (statement frame)", _r["episodes"], E["ledger episodes (numeric key)"])
+shift("ledger callers (statement frame)", _r["callers"], E["ledger callers (numeric key)"])
 
-# measured: the call-day bucket-1 stream + the work list
+# frame-dependent: the call-day bucket-1 stream + the work list.
 _r = spark.sql(f"""
     SELECT count_if(is_addressable) AS addr_episodes,
            count_if(is_addressable AND pay_f > 0 AND captured = 0) AS wl_episodes,
            count(DISTINCT CASE WHEN is_addressable AND pay_f > 0 AND captured = 0 THEN acct_key END) AS wl_accounts
     FROM {DB}.uc2_t16_04n_outcomes
 """).first()
-if _r["addr_episodes"] < E["hist callday b1 stream"]:
-    raise AssertionError(f"IMPLICATION MISS: call-day stream {fmt(_r['addr_episodes'])} < historical {fmt(E['hist callday b1 stream'])}")
-chk("addressable episodes (callday b1 stream)", _r["addr_episodes"], E["addressable episodes (callday b1 stream)"])
-chk("addressable work list episodes", _r["wl_episodes"], E["addressable work list episodes"])
-chk("addressable work list accounts", _r["wl_accounts"], E["addressable work list accounts"])
+shift("addressable episodes (statement frame)", _r["addr_episodes"], E["addressable episodes (callday b1 stream)"])
+shift("addressable work list episodes (statement frame)", _r["wl_episodes"], E["addressable work list episodes"])
+shift("addressable work list accounts (statement frame)", _r["wl_accounts"], E["addressable work list accounts"])
 
 # COMMAND ----------
 
@@ -226,9 +248,11 @@ _lang = spark.sql(f"""
 _exp_lang = E["language partition"]
 _lang_total = 0
 for _row in _lang:
-    chk(f"lang: {_row['language_group']}", _row["episodes"], _exp_lang.get(_row["language_group"]))
+    # frame-dependent counts -> measure vs the Jan reference
+    shift(f"lang: {_row['language_group']}", _row["episodes"], _exp_lang.get(_row["language_group"]))
     _lang_total += _row["episodes"]
 _r = spark.sql(f"SELECT count_if(in_ledger_exaa) AS n FROM {DB}.uc2_t16_04n_outcomes").first()
+# internal-consistency tie (partition sums to the total) - frame-independent, KEEP raising
 chk("language partition re-adds to ledger episodes", _lang_total, _r["n"])
 
 # COMMAND ----------
@@ -250,8 +274,12 @@ _cls = spark.sql(f"""
 _exp_cls = E["caller classes (aws gate)"]
 _cls_total = 0
 for _row in _cls:
-    chk(f"class: {_row['caller_class']}", _row["accounts"], _exp_cls.get(_row["caller_class"]))
+    # 'a. non-caller' grows and the caller classes shrink as callers drop out of
+    # the window - frame-dependent, measure vs the Jan reference.
+    shift(f"class: {_row['caller_class']}", _row["accounts"], _exp_cls.get(_row["caller_class"]))
     _cls_total += _row["accounts"]
+# the classes still partition the WHOLE ex-AA ledger (non-caller + callers), a
+# frame-independent tie - KEEP raising.
 chk("caller classes re-add to the ex-AA ledger", _cls_total, E["ledger exaa"])
 
 # COMMAND ----------
@@ -263,70 +291,42 @@ _r = spark.sql(f"""
            count(DISTINCT CASE WHEN w_flag THEN acct_key END) AS w_accts
     FROM {DB}.uc2_t16_04n_outcomes
 """).first()
-chk("W strict leaked accounts", _r["leaked"], E["W strict leaked accounts"])
-chk("W deceased routed", _r["routed"], E["W deceased routed"])
-chk("W accounts", _r["w_accts"], E["W accounts"])
+# W steps are frame-dependent (leaked-intent is defined on the in-window caller
+# set) - measure vs the Jan reference.
+shift("W strict leaked accounts (statement frame)", _r["leaked"], E["W strict leaked accounts"])
+shift("W deceased routed (statement frame)", _r["routed"], E["W deceased routed"])
+shift("W accounts (statement frame)", _r["w_accts"], E["W accounts"])
 _r = spark.sql(f"""
     SELECT round(sum(jan_eom_bal), 0) AS bal
     FROM (SELECT DISTINCT acct_key, jan_eom_bal FROM {DB}.uc2_t16_04n_outcomes WHERE w_flag)
 """).first()
-chk("W balance", int(_r["bal"] or 0), E["W balance"])
+shift("W balance (statement frame)", int(_r["bal"] or 0), E["W balance"])
 
 # COMMAND ----------
 
-# K9r. the 202501 recovery reconciliation (reads A's persisted tables, never the CSV)
+# K9r. the 202501 recovery reconciliation. This block compared the OLD-frame
+# caller set to the NEW-frame set; the re-anchor deliberately changes the new
+# set (window filter), so NONE of these hold as January asserts. The entire
+# block is measure-mode: it now describes how the caller set moved, not a
+# recovery tie. (The recovery reconciliation itself was a one-time round-12
+# artifact; it is preserved here as a shift picture, not a gate.)
 if ANCHOR_YM == "202501":
     _gained = spark.sql("SELECT count(*) AS n FROM _new_callers n LEFT ANTI JOIN _old_callers o ON o.acct_key = n.acct_key").first()["n"]
-    chk("gained callers", _gained, E["gained callers"])
+    shift("new-frame callers not in the old frame", _gained, E["gained callers"])
 
     _recovered = spark.sql(f"""
         SELECT count(*) AS n FROM {DB}.uc2_gap1942_202501 g
         JOIN _new_callers n ON n.acct_key = g.acct_key
     """).first()["n"]
-    chk("gap1942 recovered", _recovered, E["gap1942 recovered"])
-
-    # shortfall causes: an unexplained ('z.') account STOPS the run
-    _cause_df = spark.sql(f"""
-        WITH short AS (
-            SELECT g.acct_key FROM {DB}.uc2_gap1942_202501 g
-            LEFT ANTI JOIN _new_callers n ON n.acct_key = g.acct_key
-        ),
-        r AS (
-            SELECT s.acct_key, e.is_biz, e.within_effdt_cap
-            FROM short s
-            LEFT JOIN {DB}.uc2_t16_02n_episodes e ON e.acct_key = s.acct_key
-        ),
-        classed AS (
-            SELECT acct_key,
-                   CASE
-                     WHEN max(CASE WHEN is_biz = 0 AND within_effdt_cap = 1 THEN 1 ELSE 0 END) = 1
-                       THEN 'z. eligible row exists yet not a caller (unexplained - STOP)'
-                     WHEN max(is_biz) IS NULL
-                       THEN 'z. no 02n rows at all (unexplained - STOP)'
-                     WHEN min(is_biz) = 1 THEN 'a. only business-card rows'
-                     WHEN max(is_biz) = 0 THEN 'b. only out-of-effdt-cap rows'
-                     ELSE 'c. mixed business-card / out-of-cap rows'
-                   END AS cause
-            FROM r GROUP BY acct_key
-        )
-        SELECT cause, count(*) AS accounts FROM classed GROUP BY 1 ORDER BY 1
-    """)
-    _unexplained = sum(r["accounts"] for r in _cause_df.collect() if r["cause"].startswith("z."))
-    chk("gap1942 shortfall unexplained (must be zero)", _unexplained, 0, ctx=_cause_df)
-
-    _outside = spark.sql(f"""
-        SELECT count(*) AS n
-        FROM _new_callers n
-        LEFT ANTI JOIN _old_callers o ON o.acct_key = n.acct_key
-        LEFT ANTI JOIN {DB}.uc2_gap1942_202501 g ON g.acct_key = n.acct_key
-    """).first()["n"]
-    chk("gained outside 1942", _outside, E["gained outside 1942"])
+    shift("gap1942 accounts still present in the new frame", _recovered, E["gap1942 recovered"])
 
     _overlap = spark.sql(f"""
         SELECT count(*) AS n FROM {DB}.uc2_sasflag_202501 f
         JOIN _new_callers n ON n.acct_key = f.acct_key
     """).first()["n"]
-    chk("flagged overlap arithmetic tie (= 9,194 + recovered)", _overlap, 9194 + _recovered)
-    chk("flagged overlap (202501 recon)", _overlap, E["flagged overlap (202501 recon)"])
+    shift("flagged accounts present in the new frame", _overlap, E["flagged overlap (202501 recon)"])
 
-print("B02_checks: ALL PASS - the lean B02 build is certified equivalent to the locked original.")
+print("B02_checks: DONE. Frame-independent anchors (K2/K4/K5 + the partition ties) "
+      "asserted and PASS if reached here. Frame-dependent counts (K9/K9r) reported "
+      "in measure mode vs the January reference - they move by design under the "
+      "re-anchor. A moved FRAME-INDEPENDENT anchor would have STOPPED above.")
