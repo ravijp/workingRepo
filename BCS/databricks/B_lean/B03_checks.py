@@ -81,13 +81,19 @@ _s = spark.sql(f"""
            count(DISTINCT CASE WHEN leaked_sas THEN acct_key END) AS leaked_accts
     FROM {OUT}
 """).first()
-# step 1: reads the 01s spine (native caller flag), pre-re-anchor -> RAISING
-chk("funnel called (inb_native, ledger)", _r["called"], E["funnel called (inb_native, ledger)"])
+# CORRECTION 2026-07-21: step 1 is NOT frame-independent. inb_native counts
+# accounts with an inbound episode in the re-anchored 02n, so it GREW with the
+# statement-window widening (Feb/Mar calls admitted). It moves like steps 2-4 ->
+# measure-mode, not raising. (The genuinely frame-independent B03 tie is the
+# language-partition sum-to-total, asserted inside B03_insights itself.)
+shift("funnel called (inb_native, ledger) (statement frame)", _r["called"], E["funnel called (inb_native, ledger)"])
 # steps 2-4: read the re-anchored 04s -> MEASURE vs the Jan reference
 shift("funnel callers with episodes (statement frame)", _s["ep_callers"], E["funnel callers with episodes"])
 shift("funnel intent accounts (statement frame)", _s["intent_accts"], E["funnel intent accounts"])
 shift("funnel leaked accounts (statement frame)", _s["leaked_accts"], E["funnel leaked accounts"])
 
-print("B03_checks: DONE. Step-1 'called' (frame-independent) asserted and PASS if "
-      "reached here. Steps 2-4 reported vs the January reference - they move under "
-      "the re-anchor (step 2 drops below step 1; that divergence is expected).")
+print("B03_checks: DONE. All four funnel steps are frame-DEPENDENT (inb_native and "
+      "the 04s counts all grow under the statement re-anchor) and are reported in "
+      "measure mode vs the January reference; this file asserts nothing. The "
+      "frame-independent tie (language partition re-adds to the total) is asserted "
+      "inside B03_insights_sas.")

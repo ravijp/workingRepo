@@ -1,11 +1,19 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # B01_checks - run ONCE after B01_sas_spine.py to certify.
+# MAGIC # B01_checks - run ONCE after B01_sas_spine.py.
 # MAGIC
-# MAGIC Re-reads uc2_t16_01s_populations_202501 (and notebook A's wf table for the
-# MAGIC one-time tie-out). Runs the CQ-7 sign tripwire, the waterfall + native
-# MAGIC ladder + captured_sas asserts, the perfectly-diagonal CSV-flag tie-out, and
-# MAGIC the ledger dollar sums. A miss STOPS. Rebuilds no logic.
+# MAGIC RE-ANCHOR NOTE (2026-07-21): SPLIT into raising vs measure-mode.
+# MAGIC   RAISING (a miss STOPS) - FRAME-INDEPENDENT: the CQ-7 sign tripwire, the SAS
+# MAGIC   waterfall (610,183 / 202,479 / 186,848 / 186,013), captured_sas all/ledger,
+# MAGIC   the ledger dollar sums. These come from the SAS csv / account-grain PAYMT
+# MAGIC   and dollar fields and have NO call-window dependency, so they must not move.
+# MAGIC   MEASURE MODE (never STOPS) - FRAME-DEPENDENT: the inb_native ladder and the
+# MAGIC   one-time CSV-flag tie-out. inb_native = accounts with an inbound episode in
+# MAGIC   uc2_t16_02n_episodes, which now includes the statement-window Feb/Mar calls,
+# MAGIC   so it GREW off the January locks (34,234 -> larger) by design. The CSV-flag
+# MAGIC   tie-out compared the native flag to the JANUARY csv_inb flag; post-re-anchor
+# MAGIC   they cannot be diagonal (the native flag sees Feb/Mar callers the CSV flag
+# MAGIC   never did), so it is now reported, not asserted. Rebuilds no logic.
 
 # COMMAND ----------
 
@@ -33,6 +41,16 @@ def chk(name, actual, expected, tol=0, ctx=None):
         raise AssertionError(f"ANCHOR MISS {name}: got {fmt(actual)}, expected {fmt(expected)}"
                              + (f" (tol {tol})" if tol else ""))
     print(f"PASS  {name} = {fmt(actual)}")
+
+
+def shift(name, actual, ref):
+    """Measure-mode for FRAME-DEPENDENT counts that move under the statement
+    re-anchor (inb_native ladder, the CSV-flag tie-out). Never raises."""
+    if ref is None:
+        print(f"MEASURED  {name} = {fmt(actual)}")
+        return
+    d = actual - ref
+    print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")
 
 # COMMAND ----------
 
@@ -95,17 +113,23 @@ chk("wf 01 total (rows)", _r["s1"], E["csv rows"])
 chk("wf 02 dq1", _r["s2"], E["wf 02 dq1"])
 chk("wf 03 +cpc", _r["s3"], E["wf 03 +cpc"])
 chk("wf 04 sas ledger", _r["s4"], E["wf 04 sas ledger"])
-chk("inb_native 01 total", _r["n1"], E["inb_native 01 total"])
-chk("inb_native 02 dq1", _r["n2"], E["inb_native 02 dq1"])
-chk("inb_native 03 +cpc", _r["n3"], E["inb_native 03 +cpc"])
-chk("inb_native 04 ledger", _r["n4"], E["inb_native 04 ledger"])
+# inb_native ladder is FRAME-DEPENDENT (counts accounts with an inbound episode
+# in the re-anchored 02n, now including Feb/Mar statement-window calls) -> measure.
+shift("inb_native 01 total (statement frame)", _r["n1"], E["inb_native 01 total"])
+shift("inb_native 02 dq1 (statement frame)", _r["n2"], E["inb_native 02 dq1"])
+shift("inb_native 03 +cpc (statement frame)", _r["n3"], E["inb_native 03 +cpc"])
+shift("inb_native 04 ledger (statement frame)", _r["n4"], E["inb_native 04 ledger"])
+# captured_sas is account-grain PAYMT (no call-window dependency) -> raising.
 chk("captured_sas all", _r["cap_all"], E["captured_sas all"])
 chk("captured_sas ledger", _r["cap_ledger"], E["captured_sas ledger"])
 
 # COMMAND ----------
 
-# the ONE-TIME tie-out vs the CSV flag: must be PERFECTLY DIAGONAL (zero
-# off-diagonal). Asserts the four diagonal cells and that off-diagonal = 0.
+# the ONE-TIME CSV-flag tie-out. RE-ANCHOR: this compared the native flag to the
+# JANUARY csv_inb flag and was diagonal when both were January. Post-re-anchor the
+# native flag counts Feb/Mar statement-window callers the January CSV flag never
+# saw, so off-diagonal (T/F: native-yes, csv-no) is now EXPECTED and non-zero. The
+# tie-out was a one-time January reconciliation; report it, do not assert it.
 if spark.catalog.tableExists(f"{DB}.uc2_sas_wf_202501"):
     def _tie(where):
         return {(r["inb_native"], r["csv_inb"]): r["accounts"] for r in spark.sql(f"""
@@ -116,15 +140,15 @@ if spark.catalog.tableExists(f"{DB}.uc2_sas_wf_202501"):
         """).collect()}
 
     _all = _tie("")
-    chk("tie-out all: F/F", _all.get((False, False), 0), E["tie all F/F"])
-    chk("tie-out all: T/T", _all.get((True, True), 0), E["tie all T/T"])
-    chk("tie-out all: off-diagonal (must be zero)",
-        _all.get((False, True), 0) + _all.get((True, False), 0), 0)
+    shift("tie-out all: F/F", _all.get((False, False), 0), E["tie all F/F"])
+    shift("tie-out all: T/T", _all.get((True, True), 0), E["tie all T/T"])
+    shift("tie-out all: off-diagonal (Jan ref 0; now Feb/Mar native-only callers)",
+          _all.get((False, True), 0) + _all.get((True, False), 0), 0)
     _led = _tie("WHERE s.in_sas_ledger")
-    chk("tie-out ledger: F/F", _led.get((False, False), 0), E["tie ledger F/F"])
-    chk("tie-out ledger: T/T", _led.get((True, True), 0), E["tie ledger T/T"])
-    chk("tie-out ledger: off-diagonal (must be zero)",
-        _led.get((False, True), 0) + _led.get((True, False), 0), 0)
+    shift("tie-out ledger: F/F", _led.get((False, False), 0), E["tie ledger F/F"])
+    shift("tie-out ledger: T/T", _led.get((True, True), 0), E["tie ledger T/T"])
+    shift("tie-out ledger: off-diagonal (Jan ref 0; now Feb/Mar native-only callers)",
+          _led.get((False, True), 0) + _led.get((True, False), 0), 0)
 else:
     print("tie-out skipped (notebook A's uc2_sas_wf_202501 absent)")
 
@@ -139,4 +163,8 @@ _r = spark.sql(f"""
 chk("ledger eop_bal_m1 sum", int(_r["eop_bal"] or 0), E["ledger eop_bal_m1 sum"])
 chk("ledger ecl_m1 sum", int(_r["ecl"] or 0), E["ledger ecl_m1 sum"])
 
-print("B01_checks: ALL PASS - the lean B01 build is certified equivalent to the locked original.")
+print("B01_checks: DONE. Frame-independent anchors (CQ-7 sign, the SAS waterfall "
+      "610,183/202,479/186,848/186,013, captured_sas, ledger dollars) asserted and "
+      "PASS if reached here. Frame-dependent counts (inb_native ladder, CSV-flag "
+      "tie-out) reported in measure mode - they grow under the statement re-anchor "
+      "by design. A moved FRAME-INDEPENDENT anchor would have STOPPED above.")
