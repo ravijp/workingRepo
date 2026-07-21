@@ -76,7 +76,12 @@ CO12_END = (_mm(_a0, 13) - _dt.timedelta(days=1)).isoformat()
 FWD_CO_START = _a0.strftime("%Y%m%d")
 FWD_CO_END = _mm(_a0, 12).strftime("%Y%m%d")
 SNAP_DAILY_START = _mm(_a0, -7).strftime("%Y%m%d")
-SNAP_DAILY_END = _mm(_a0, 1).strftime("%Y%m%d")
+# STORY-B FIX 2026-07-21: was _mm(_a0, 1) (20250201), which ended the daily-snapshot
+# scan at Feb 1 - so a newly-admitted Feb/Mar call fell back to its stale January-EOM
+# delinquency bucket (biasing callday_bucket / is_addressable low on the post-due
+# tail). Widen to _mm(_a0, 3) (20250401) so daily snapshots exist through March and
+# each Feb/Mar call gets its own-day bucket. Snapshot scan only; no fan-out.
+SNAP_DAILY_END = _mm(_a0, 3).strftime("%Y%m%d")
 EFFDT_SCAN_START = _mm(_a0, -1).isoformat()
 EFFDT_HARD_END = "2026-07-10"   # not vintage-derived: the live-loading-edge guard
 
@@ -342,7 +347,13 @@ calls_flagged AS (
                 THEN 1 ELSE 0 END AS had_zero_pad          -- diagnostic: the rows the string key lost
     FROM {CALL}
     WHERE initiationmethod = 'INBOUND'
-      AND `date` >= DATE '{CALL_WIN_START}' AND `date` < DATE '{CALL_WIN_END}'
+      -- STORY-B FIX 2026-07-21: the upper bound was DATE '{CALL_WIN_END}' (Feb 1),
+      -- which boxed calls to calendar January and made the statement re-anchor a
+      -- NO-OP (Feb post-due-cycle calls could never enter, so every shipped number
+      -- stayed at the January frame). Widen to CALL_WIN_END + STMT_WINDOW_DAYS so a
+      -- late-January statement's full [stmt_dt, stmt_dt+56) window is reachable.
+      AND `date` >= DATE '{CALL_WIN_START}'
+      AND `date` <  date_add(DATE '{CALL_WIN_END}', {STMT_WINDOW_DAYS})
       AND acctid IS NOT NULL
       AND effdt >= '{EFFDT_SCAN_START}' AND effdt < '{EFFDT_HARD_END}'   -- D8 bounded scan
 ),
@@ -405,8 +416,12 @@ episodes_std AS (
         FROM calls_anchored
         WHERE acct_key IS NOT NULL AND acct_key <> ''
           AND is_biz = 0
-          AND within_effdt_cap = 1
-          AND in_stmt_window = 1                             -- RE-ANCHOR: drop call-days outside any statement window
+          -- STORY-B FIX 2026-07-21: within_effdt_cap = 1 (effdt in January) was
+          -- re-boxing survivors back to January and defeating the widened call
+          -- window above. Dropped as a KEEP-gate so in_stmt_window is the SOLE
+          -- re-anchor filter; within_effdt_cap stays a carried diagnostic column
+          -- (still emitted in the final SELECT, no downstream consumer as a gate).
+          AND in_stmt_window = 1                             -- RE-ANCHOR: the sole statement-window keep flag
     )
     WHERE rn = 1
 )
