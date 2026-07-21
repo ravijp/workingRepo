@@ -64,10 +64,13 @@ Run each `_checks.py` right after the core that built its table. A miss STOPS.
   captured_sas / leaked_sas / W_s accounts) are conditioned on the in-window
   caller set, so all five move; it prints each vs the January reference and
   asserts nothing.
-- **B03_checks** is ALSO split: step 1 "called (inb_native, ledger)" = 11,136
-  stays raising (reads the 01s spine, frame-independent); steps 2-4
-  (callers-with-episodes, intent, leaked) are measure-mode (read the re-anchored
-  04s, they move; step 2 drops below step 1, which is the informative part).
+- **B03_checks** is fully measure-mode: all four funnel steps are
+  frame-DEPENDENT under the re-anchor. Step 1 "called (inb_native, ledger)" GREW
+  off 11,136 because inb_native now counts Feb/Mar statement-window callers (the
+  correction in ae653a5); steps 2-4 (callers-with-episodes, intent, leaked) read
+  the re-anchored 04s and also move. It asserts nothing. The one frame-independent
+  B03 tie (language partition re-adds to the total) is asserted inside
+  B03_insights_sas itself, not here.
 - **A_recon_lock_checks, B01_checks** are unchanged raising checks: A and the
   01s spine are pre-re-anchor layers, so their anchors hold. If either STOPS,
   that is a real defect (the lean cleanup broke something), not the re-anchor.

@@ -29,14 +29,20 @@ EPI = f"{DB}.uc2_t16_02n_episodes"
 # MAGIC ## P1 - reconcile the 22,293-vs-25 gap (THE decisive probe)
 # MAGIC On the OLD (pre-fix) 02n: std_episodes ~= 25 while in_window_calls ~= tens of
 # MAGIC thousands CONFIRMS the single-max anchor as the cause. On the FIXED 02n:
-# MAGIC std_episodes should rise to ~19-22k, matching in_window_calls and Ishant.
+# MAGIC std_episodes rises to the statement-window scale and in_window_calls should
+# MAGIC be >= std_episodes (the gap = call-days that are in-window but not the
+# MAGIC first-inbound-per-day survivor). NOTE: in_window_calls uses the SAME keep
+# MAGIC predicate as episodes_std - in_stmt_window=1 AND is_biz=0 AND acct_key valid -
+# MAGIC WITHOUT within_effdt_cap, which fix #2 (36e20e4) dropped as an episode gate;
+# MAGIC leaving it in here would under-count in_window_calls below std_episodes and
+# MAGIC make this probe misread.
 
 # COMMAND ----------
 
 spark.sql(f"""
     SELECT
       count_if(is_episode_std = 1)                                   AS std_episodes,
-      count_if(in_stmt_window = 1 AND is_biz = 0 AND within_effdt_cap = 1
+      count_if(in_stmt_window = 1 AND is_biz = 0
                AND acct_key IS NOT NULL AND acct_key <> '')          AS in_window_calls,
       count(DISTINCT CASE WHEN is_episode_std = 1 THEN acct_key END)  AS std_callers
     FROM {EPI}
@@ -111,7 +117,9 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-print("B_window_probe: done. P1 is decisive. Compare in_window_calls vs "
-      "std_episodes: equal (~19-22k) after the B02 fix = recovered; a 22k-vs-25 "
-      "split (old 02n) = the single-max anchor defect confirmed. P4 sizes the "
-      "target against Ishant's verified ~19,025.")
+print("B_window_probe: done. P1 is decisive. After the B02 fix, std_episodes is at "
+      "statement-window scale and in_window_calls >= std_episodes (recovered); a "
+      "22k-vs-25 split (old 02n) = the single-max anchor defect confirmed. P4 sizes "
+      "the target against Ishant's verified ~19,025. NOTE: P1 counts the WHOLE call "
+      "universe on 02n, NOT the ledger; the apples-to-apples ~19,025 compare is the "
+      "post-due slice on the SAS ledger (B03 insights), not P1.")

@@ -234,11 +234,14 @@ print("=== (b) episodes DROPPED for falling outside all statement windows ===")
 _drop = spark.sql(f"""
     WITH first_inbound AS (
         -- the first-inbound-per-day survivor WITHOUT the statement keep flag,
-        -- reconstructed on 02n so we can count what the re-anchor removed
+        -- reconstructed on 02n so we can count what the re-anchor removed. Matches
+        -- the real episodes_std keep predicate (is_biz=0 AND acct_key valid) WITHOUT
+        -- within_effdt_cap, which fix #2 (36e20e4) dropped as an episode gate; keeping
+        -- it here would mis-state the kept/dropped split vs the actual 04s set.
         SELECT acct_key, contactid, call_dt, in_stmt_window, stmt_dt,
                row_number() OVER (PARTITION BY acct_key, call_dt ORDER BY contactid) AS rn
         FROM {EPI}
-        WHERE is_biz = 0 AND within_effdt_cap = 1
+        WHERE is_biz = 0
           AND acct_key IS NOT NULL AND acct_key <> ''
     ),
     fi AS (SELECT * FROM first_inbound WHERE rn = 1)
