@@ -18,7 +18,7 @@ CATALOG = "cda_model_shared"
 SCHEMA = "ecm_cld_model"
 DB = f"{CATALOG}.{SCHEMA}"
 CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WATERFALL_COLL_CALL_V2_202501.csv"
-CALL_TABLE = "062108867742_glue_connectivity_catalog.contactcenter_bdp_db.`call`"
+CALL_TABLE = "`062108867742_glue_connectivity_catalog`.contactcenter_bdp_db.`call`"
 ANCHOR_YM = "202501"
 
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"   # THE numeric key rule

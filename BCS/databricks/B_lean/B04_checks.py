@@ -168,8 +168,12 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-# the B05 pool ties (a miss = the sampling substrate moved; STOP the wave).
-# Predicates match phase3-scale-pools-2026-07-16.md exactly.
+# the B05 pool ties. PREDICATES match phase3-scale-pools-2026-07-16.md; the
+# LITERALS are January-frame and are reported (not asserted) until re-locked from
+# a fixed statement-frame run (owner decision: the sampler is statement-frame).
+# TO RE-LOCK: after the fixed pipeline + probe confirm recovery, replace the
+# E["..."] values with the statement-frame counts this file prints, and flip the
+# shift() calls in this pool block back to chk() so the substrate guard raises again.
 _pools = [
     ("leaked_core",       "a_raw_f = 1",                                       E["leaked_core eps"], E["leaked_core accts"]),
     ("leaked_exec",       "a_raw_f = 1 AND exec_f = 1",                        E["leaked_exec eps"], E["leaked_exec accts"]),
@@ -180,14 +184,19 @@ _pools = [
     ("silent_relaxed",    "language_group = 'g. no payment-related language' AND NOT captured_sas AND tx_f = 1",
                           E["silent_relaxed eps"], E["silent_relaxed accts"]),
 ]
+# RE-ANCHOR (owner decision 2026-07-21): the sampler draws from the
+# STATEMENT-FRAME population, so these pools are built on the re-anchored 04s and
+# their sizes MOVE off the B05 January literals by design. Report in measure mode
+# vs the January reference; RE-LOCK these as statement-frame literals from the
+# fixed run, then they can return to raising. Until then they never STOP.
 for _name, _pred, _exp_e, _exp_a in _pools:
     _r = spark.sql(f"SELECT count(*) AS e, count(DISTINCT acct_key) AS a FROM _chk_pool WHERE {_pred}").first()
-    chk(f"{_name} pool episodes", _r["e"], _exp_e)
-    chk(f"{_name} pool accounts", _r["a"], _exp_a)
+    shift(f"{_name} pool episodes (statement frame)", _r["e"], _exp_e)
+    shift(f"{_name} pool accounts (statement frame)", _r["a"], _exp_a)
 
-# leaked_core accounts = W_s (the headline tie, called out on its own)
+# leaked_core accounts vs W_s: both move to the statement frame together; report.
 _r = spark.sql("SELECT count(DISTINCT CASE WHEN a_raw_f = 1 THEN acct_key END) AS n FROM _chk_pool").first()
-chk("leaked_core accounts = W_s (1,646)", _r["n"], E["04s W_s accounts"])
+shift("leaked_core accounts (statement frame; Jan ref = W_s 1,646)", _r["n"], E["04s W_s accounts"])
 
 # COMMAND ----------
 
@@ -199,8 +208,8 @@ _r = spark.sql("""
       AND NOT captured_sas AND tx_f = 1
       AND try_cast(dlnqt_cd_m2 AS int) = 1
 """).first()
-chk("silent_relaxed + M2 gate = strict G/C episodes", _r["e"], E["strict G/C eps"])
-chk("silent_relaxed + M2 gate = strict G/C accounts", _r["a"], E["strict G/C accts"])
+shift("silent_relaxed + M2 gate = strict G/C episodes (statement frame)", _r["e"], E["strict G/C eps"])
+shift("silent_relaxed + M2 gate = strict G/C accounts (statement frame)", _r["a"], E["strict G/C accts"])
 
 # COMMAND ----------
 
@@ -210,8 +219,8 @@ _r = spark.sql("""
            count(DISTINCT CASE WHEN tx_f = 1 THEN acct_key END) AS accts
     FROM _chk_pool
 """).first()
-chk("R-tx episodes with transcript", _r["eps"], E["R-tx eps"])
-chk("R-tx accounts with >= 1 transcript episode", _r["accts"], E["R-tx accts"])
+shift("R-tx episodes with transcript (statement frame)", _r["eps"], E["R-tx eps"])
+shift("R-tx accounts with >= 1 transcript episode (statement frame)", _r["accts"], E["R-tx accts"])
 
 # COMMAND ----------
 
@@ -221,7 +230,7 @@ _r = spark.sql("""
     SELECT round(sum(gross_loss_12m_amt), 0) AS gl12m
     FROM (SELECT DISTINCT acct_key, gross_loss_12m_amt FROM _chk_pool WHERE a_raw_f = 1)
 """).first()
-chk("leaked_core GROSS_LOSS_12M = round-12 W_s row", int(_r["gl12m"] or 0), E["leaked_core gl12m"])
+shift("leaked_core GROSS_LOSS_12M (statement frame; Jan ref = round-12 W_s row)", int(_r["gl12m"] or 0), E["leaked_core gl12m"])
 
 # COMMAND ----------
 

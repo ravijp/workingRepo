@@ -308,7 +308,7 @@ spark.sql(f"REFRESH TABLE {CALL}")
 
 spark.sql(f"""
 CREATE OR REPLACE TABLE {DB}.uc2_t16_02n_episodes AS
-stmt_dates AS (
+WITH stmt_dates AS (
     -- ALL distinct statement dates per account over the bounded fmt window
     -- (sfx_nbr=0), one per billing cycle. Source is fmt_acct_c.stmt_last_dt
     -- (NOT a SAS csv column). Grain: one row per (acct_key, statement date).
