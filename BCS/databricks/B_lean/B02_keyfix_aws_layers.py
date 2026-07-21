@@ -11,9 +11,10 @@
 # MAGIC DISCLOSED DEVIATION (D8): the 02n call scan adds an effdt bound
 # MAGIC [EFFDT_SCAN_START, 2026-07-10) plus REFRESH TABLE. Standard episodes need
 # MAGIC the stricter in-column cap, so no anchor moves.
-# MAGIC STORY-B RE-ANCHOR (2026-07-21): the 02n episode build now anchors to each
-# MAGIC account's STATEMENT CYCLE. A stmt_anchor CTE reads max(stmt_last_dt) per
-# MAGIC account from fmt (bounded, sfx_nbr=0), joins it to the episodes, computes
+# MAGIC STORY-B RE-ANCHOR (2026-07-21, fixed same day): the 02n episode build now
+# MAGIC anchors each call to ITS OWN cycle's statement. A stmt_dates CTE reads ALL
+# MAGIC distinct statement dates per account from fmt (bounded, sfx_nbr=0); each
+# MAGIC call as-of joins the most-recent statement ON OR BEFORE it, then computes
 # MAGIC days_since_stmt_dt / stmt_5day_bucket / pre_due_f / post_due_f, and keeps
 # MAGIC ONLY episodes whose call_dt falls in [stmt_dt, stmt_dt + 56d). Call-days
 # MAGIC outside any statement window DROP from the episode population - this is
@@ -293,9 +294,10 @@ spark.sql(f"REFRESH TABLE {CALL}")
 # MAGIC %md
 # MAGIC ## K6. Build `uc2_t16_02n_episodes` (numeric key; had_zero_pad diagnostic; D8 bounded scan; STORY-B statement re-anchor)
 # MAGIC
-# MAGIC RE-ANCHOR: a stmt_anchor CTE reads one statement date per account
-# MAGIC (max(stmt_last_dt) over the bounded fmt window, sfx_nbr=0) and joins it to
-# MAGIC the calls. days_since_stmt_dt = datediff(call_dt, stmt_dt); the 5-day
+# MAGIC RE-ANCHOR: a stmt_dates CTE reads ALL distinct statement dates per account
+# MAGIC (over the bounded fmt window, sfx_nbr=0); each call as-of joins the
+# MAGIC most-recent statement on or before it (QUALIFY row_number ... = 1).
+# MAGIC days_since_stmt_dt = datediff(call_dt, stmt_dt); the 5-day
 # MAGIC bucket floor(days/5)*5 is labelled with due-date meaning (pre-due 00-24,
 # MAGIC post-due 25-55, due day = 25), with an "outside 0-55" sentinel. An episode
 # MAGIC is standard (is_episode_std = 1) ONLY if it is first-inbound-per-day AND
@@ -306,17 +308,24 @@ spark.sql(f"REFRESH TABLE {CALL}")
 
 spark.sql(f"""
 CREATE OR REPLACE TABLE {DB}.uc2_t16_02n_episodes AS
-WITH stmt_anchor AS (
-    -- one statement date per account: max(stmt_last_dt) over the bounded fmt
-    -- window (sfx_nbr=0). Source is fmt_acct_c.stmt_last_dt (NOT a SAS csv
-    -- column). Grain: one row per acct_key. Unit: a calendar date (day 0).
+stmt_dates AS (
+    -- ALL distinct statement dates per account over the bounded fmt window
+    -- (sfx_nbr=0), one per billing cycle. Source is fmt_acct_c.stmt_last_dt
+    -- (NOT a SAS csv column). Grain: one row per (acct_key, statement date).
+    -- FIX 2026-07-21: the prior stmt_anchor used max(stmt_last_dt) = ONE date
+    -- per account, which for a January call was almost always a Feb/Mar
+    -- statement (AFTER the call), so datediff < 0 and in_stmt_window = 0 for
+    -- nearly everyone - only ~25 coincidental survivors reached 04s and
+    -- captured_sas went to 0. Each call must be measured against ITS OWN
+    -- cycle's statement (the most recent statement on or before the call),
+    -- not the account's latest statement. See WINDOW_COLLAPSE_DIAGNOSIS.md.
     SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,
-           max(try_cast(stmt_last_dt AS date)) AS stmt_dt
+           try_cast(stmt_last_dt AS date) AS stmt_dt
     FROM {FMT}
     WHERE sfx_nbr = 0
       AND eff_dt >= '{MONTH_WIN_START}' AND eff_dt < '{MONTH_WIN_END}'
       AND stmt_last_dt IS NOT NULL
-    GROUP BY 1
+    GROUP BY 1, 2
 ),
 calls_flagged AS (
     SELECT {NUM_KEY.format(c="acctid")} AS acct_key,      -- THE KEY CHANGE (D2)
@@ -375,7 +384,15 @@ calls_anchored AS (
                           * {STMT_BUCKET_WIDTH} AS int)
            END AS stmt_5day_bucket_start                     -- unit: days; the bucket's low edge, for ordering
     FROM calls_flagged c
-    LEFT JOIN stmt_anchor a ON a.acct_key = c.acct_key
+    -- AS-OF join: attach the most-recent statement ON OR BEFORE the call, so
+    -- each call is measured against its OWN cycle's statement (FIX 2026-07-21).
+    -- A call with no prior statement gets stmt_dt = NULL -> in_stmt_window = 0
+    -- (correctly excluded). One statement per contactid via the QUALIFY pick.
+    LEFT JOIN stmt_dates a
+      ON a.acct_key = c.acct_key
+     AND a.stmt_dt <= c.call_dt
+    QUALIFY row_number() OVER (PARTITION BY c.contactid
+                               ORDER BY a.stmt_dt DESC) = 1
 ),
 episodes_std AS (
     -- first-inbound-per-day survivor, RE-ANCHORED to the statement window.

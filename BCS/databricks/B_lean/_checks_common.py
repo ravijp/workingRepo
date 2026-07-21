@@ -35,3 +35,15 @@ def chk(name, actual, expected, tol=0, ctx=None):
         raise AssertionError(f"ANCHOR MISS {name}: got {fmt(actual)}, expected {fmt(expected)}"
                              + (f" (tol {tol})" if tol else ""))
     print(f"PASS  {name} = {fmt(actual)}")
+
+
+def shift(name, actual, ref):
+    """Measure-mode reporter for FRAME-DEPENDENT counts that move under the
+    statement re-anchor (episode/caller/gate counts on the re-anchored 04s).
+    Prints the fresh statement-frame value, the January reference, and the delta.
+    NEVER raises - a moved count here is the re-anchor working, not a defect."""
+    if ref is None:
+        print(f"MEASURED  {name} = {fmt(actual)}")
+        return
+    d = actual - ref
+    print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")

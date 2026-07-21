@@ -1,5 +1,33 @@
 # BUILD_NOTES_4b - the Story-B statement re-anchor + new B04 (2026-07-21)
 
+## FIX 2026-07-21 (post first-run): the single-max statement anchor was a defect
+
+First re-anchored run collapsed 04s to 25 episodes / captured_sas = 0, vs
+Ishant's VERIFIED ~19,025 in-window accounts on the same 186,013 base. Cause
+(WINDOW_COLLAPSE_DIAGNOSIS.md): the original `stmt_anchor` CTE used
+`max(stmt_last_dt)` = ONE date per account over a Dec-2024..Mar-2025 window,
+which for a January call was almost always a FUTURE (Feb/Mar) statement, so
+`datediff(call_dt, stmt_dt) < 0`, `in_stmt_window = 0`, and the episode filter
+dropped all but ~25 coincidental survivors (the only ones whose single max
+statement happened to precede their call). captured_sas = 0 followed - no
+representative payer left.
+
+FIX (in B02 K6): replaced `stmt_anchor` (one max/account) with `stmt_dates`
+(ALL distinct statement dates per account) and made `calls_anchored` an AS-OF
+join - each call takes the most-recent statement ON OR BEFORE it
+(`s.stmt_dt <= c.call_dt`, `QUALIFY row_number() OVER (PARTITION BY contactid
+ORDER BY stmt_dt DESC) = 1`). Every downstream CTE, the window math, and
+episodes_std are byte-identical - only the per-call anchor date changed.
+Expected: 04s episodes/callers recover to ~19-22k, matching Ishant.
+
+CONFIRM BEFORE TRUSTING: run `B_window_probe.py` (P1 is decisive - in_window_calls
+vs std_episodes; P4 sizes against Ishant's 19,025). Also applied: B04_checks
+gate anchors -> measure-mode (they are frame-dependent post-re-anchor).
+Nothing is certified until the fixed run + probe land.
+
+---
+
+
 Story B (statement-timing leakage) is now the CORE frame. The inbound analysis
 is re-anchored from calendar-January to each account's STATEMENT CYCLE. Numbers
 are expected to MOVE off the January values; the fresh statement-frame numbers

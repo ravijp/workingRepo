@@ -49,6 +49,16 @@ except NameError:
                                  + (f" (tol {tol})" if tol else ""))
         print(f"PASS  {name} = {fmt(actual)}")
 
+try:
+    shift  # noqa: F821
+except NameError:
+    def shift(name, actual, ref):
+        if ref is None:
+            print(f"MEASURED  {name} = {fmt(actual)}")
+            return
+        d = actual - ref
+        print(f"MEASURED  {name} = {fmt(actual)}   (Jan ref {fmt(ref)}, delta {'+' if d >= 0 else ''}{fmt(d)})")
+
 # COMMAND ----------
 
 import datetime as _dt
@@ -70,13 +80,20 @@ EFFDT_HARD_END = "2026-07-10"
 
 # LOCKED B05 pool values (phase3-scale-pools-2026-07-16.md), reused here as the
 # certification literals. The strata names below map to the B05 pools.
-E = {
-    # population gate (B02b, round-12) - UNTOUCHED by the sampler
+# January-frame REFERENCE for the population gate. These are FRAME-DEPENDENT:
+# after the statement re-anchor, the 04s table holds only in-window episodes, so
+# episodes/callers/captured_sas/leaked_sas/W_s all MOVE off these January values
+# by design (see B_stmt_distribution + B02b_checks, which already report them in
+# measure mode). Reported here vs the reference, NOT asserted.
+REF_JAN = {
     "04s episodes": 13486,
     "04s callers": 11136,
     "04s captured_sas accounts": 8037,
     "04s leaked_sas accounts": 1801,
     "04s W_s accounts": 1646,
+}
+
+E = {
     # B05 pool episodes / accounts (raw predicates; no transcript-exists gate)
     "leaked_core eps": 1857, "leaked_core accts": 1646,   # = W_s accounts (the tie)
     "leaked_exec eps": 95, "leaked_exec accts": 88,
@@ -114,11 +131,14 @@ _r = spark.sql(f"""
            count(DISTINCT CASE WHEN w_s_flag     THEN acct_key END) AS w_s_accts
     FROM {OUT}
 """).first()
-chk("04s episodes", _r["episodes"], E["04s episodes"])
-chk("04s callers", _r["callers"], E["04s callers"])
-chk("04s captured_sas accounts", _r["captured_accts"], E["04s captured_sas accounts"])
-chk("04s leaked_sas accounts", _r["leaked_accts"], E["04s leaked_sas accounts"])
-chk("04s W_s accounts", _r["w_s_accts"], E["04s W_s accounts"])
+# FRAME-DEPENDENT: the re-anchor filters 04s to in-window episodes, so all five
+# move off the January reference. Measure mode (never STOPS); the B05 pool ties
+# below are the raising substrate guard for the sampler.
+shift("04s episodes (statement frame)", _r["episodes"], REF_JAN["04s episodes"])
+shift("04s callers (statement frame)", _r["callers"], REF_JAN["04s callers"])
+shift("04s captured_sas accounts (statement frame)", _r["captured_accts"], REF_JAN["04s captured_sas accounts"])
+shift("04s leaked_sas accounts (statement frame)", _r["leaked_accts"], REF_JAN["04s leaked_sas accounts"])
+shift("04s W_s accounts (statement frame)", _r["w_s_accts"], REF_JAN["04s W_s accounts"])
 
 # COMMAND ----------
 
