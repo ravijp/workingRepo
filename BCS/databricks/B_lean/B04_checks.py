@@ -196,7 +196,7 @@ for _name, _pred, _exp_e, _exp_a in _pools:
 
 # leaked_core accounts vs W_s: both move to the statement frame together; report.
 _r = spark.sql("SELECT count(DISTINCT CASE WHEN a_raw_f = 1 THEN acct_key END) AS n FROM _chk_pool").first()
-shift("leaked_core accounts (statement frame; Jan ref = W_s 1,646)", _r["n"], E["04s W_s accounts"])
+shift("leaked_core accounts (statement frame; Jan ref = W_s 1,646)", _r["n"], REF_JAN["04s W_s accounts"])
 
 # COMMAND ----------
 
