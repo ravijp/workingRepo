@@ -8,7 +8,14 @@
 # MAGIC episode-grain "captured" under this gate; classes are account-level.
 # MAGIC leaked_sas = NOT captured_sas AND >= 1 payment-language episode.
 # MAGIC W_s = leaked_sas AND non-deceased. AWS day-grain gate rides as aws_
-# MAGIC diagnostics only. Run B02b_checks.py once after this to certify.
+# MAGIC diagnostics only.
+# MAGIC STORY-B RE-ANCHOR (2026-07-21): the 04s episode grain now carries the
+# MAGIC statement-cycle attributes from 02n/04n (stmt_dt, days_since_stmt_dt,
+# MAGIC stmt_5day_bucket, stmt_5day_bucket_start, pre_due_f, post_due_f). The
+# MAGIC episode set is already re-anchored upstream (02n keeps only in-window
+# MAGIC episodes), so the caller/episode COUNTS reflect the statement frame. The
+# MAGIC account-grain captured_sas / leaked_sas / w_s_flag derivations are
+# MAGIC byte-identical (frame-independent). Run B02b_checks.py once to certify.
 
 # COMMAND ----------
 
@@ -72,6 +79,8 @@ WITH s AS (
 ),
 j AS (
     SELECT e.acct_key, e.contactid, e.call_dt,
+           e.stmt_dt, e.days_since_stmt_dt,
+           e.pre_due_f, e.post_due_f, e.stmt_5day_bucket, e.stmt_5day_bucket_start,
            e.language_group, e.pay_f, e.deceased_f, e.exec_f, e.has_tx,
            e.callday_bucket, e.is_addressable,
            e.captured    AS aws_captured_episode,

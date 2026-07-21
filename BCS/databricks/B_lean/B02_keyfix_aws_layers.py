@@ -11,6 +11,16 @@
 # MAGIC DISCLOSED DEVIATION (D8): the 02n call scan adds an effdt bound
 # MAGIC [EFFDT_SCAN_START, 2026-07-10) plus REFRESH TABLE. Standard episodes need
 # MAGIC the stricter in-column cap, so no anchor moves.
+# MAGIC STORY-B RE-ANCHOR (2026-07-21): the 02n episode build now anchors to each
+# MAGIC account's STATEMENT CYCLE. A stmt_anchor CTE reads max(stmt_last_dt) per
+# MAGIC account from fmt (bounded, sfx_nbr=0), joins it to the episodes, computes
+# MAGIC days_since_stmt_dt / stmt_5day_bucket / pre_due_f / post_due_f, and keeps
+# MAGIC ONLY episodes whose call_dt falls in [stmt_dt, stmt_dt + 56d). Call-days
+# MAGIC outside any statement window DROP from the episode population - this is
+# MAGIC what makes the caller/episode counts MOVE off the January values (by
+# MAGIC design). The numeric key, is_biz=0 / within-scan filters, the 03n regexes,
+# MAGIC the ex-AA gate and the aws diagnostics are byte-identical; 00n/01n
+# MAGIC population logic is unchanged (account grain, frame-independent).
 # MAGIC Run B02_checks.py once after this to certify all population/caller anchors.
 
 # COMMAND ----------
@@ -70,6 +80,18 @@ EFFDT_SCAN_START = _mm(_a0, -1).isoformat()
 EFFDT_HARD_END = "2026-07-10"   # not vintage-derived: the live-loading-edge guard
 
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"
+
+# --- statement-cycle re-anchor constants (Story B, 2026-07-21) ------------
+# The inbound analysis is re-anchored from calendar January to each account's
+# STATEMENT CYCLE. stmt_dt = statement date (day 0, the bill lands), sourced
+# from fmt_acct_c.stmt_last_dt. Day 0..~25 = PRE-DUE run-up to the payment due
+# date (due day ~= 25). Day 25..~56 = POST-DUE, from the missed due date until
+# the NEXT statement lands ~31 days later. days_since_stmt_dt = datediff(call_dt,
+# stmt_dt); 5-day buckets over 0..55. An episode is kept only if call_dt is in
+# [stmt_dt, stmt_dt + STMT_WINDOW_DAYS).
+STMT_DUE_DAY = 25            # unit: days since stmt_dt; the payment due date marker
+STMT_WINDOW_DAYS = 56        # unit: days; the [stmt_dt, stmt_dt+56) episode window
+STMT_BUCKET_WIDTH = 5        # unit: days; 5-day bucket width over 0..55
 
 print(f"SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
 # =====================================================================
@@ -269,13 +291,34 @@ spark.sql(f"REFRESH TABLE {CALL}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## K6. Build `uc2_t16_02n_episodes` (numeric key; had_zero_pad diagnostic; D8 bounded scan)
+# MAGIC ## K6. Build `uc2_t16_02n_episodes` (numeric key; had_zero_pad diagnostic; D8 bounded scan; STORY-B statement re-anchor)
+# MAGIC
+# MAGIC RE-ANCHOR: a stmt_anchor CTE reads one statement date per account
+# MAGIC (max(stmt_last_dt) over the bounded fmt window, sfx_nbr=0) and joins it to
+# MAGIC the calls. days_since_stmt_dt = datediff(call_dt, stmt_dt); the 5-day
+# MAGIC bucket floor(days/5)*5 is labelled with due-date meaning (pre-due 00-24,
+# MAGIC post-due 25-55, due day = 25), with an "outside 0-55" sentinel. An episode
+# MAGIC is standard (is_episode_std = 1) ONLY if it is first-inbound-per-day AND
+# MAGIC in_stmt_window = 1 (call_dt in [stmt_dt, stmt_dt+56)). Call-days outside
+# MAGIC any statement window DROP from the episode population - the intended move.
 
 # COMMAND ----------
 
 spark.sql(f"""
 CREATE OR REPLACE TABLE {DB}.uc2_t16_02n_episodes AS
-WITH calls_flagged AS (
+WITH stmt_anchor AS (
+    -- one statement date per account: max(stmt_last_dt) over the bounded fmt
+    -- window (sfx_nbr=0). Source is fmt_acct_c.stmt_last_dt (NOT a SAS csv
+    -- column). Grain: one row per acct_key. Unit: a calendar date (day 0).
+    SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,
+           max(try_cast(stmt_last_dt AS date)) AS stmt_dt
+    FROM {FMT}
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '{MONTH_WIN_START}' AND eff_dt < '{MONTH_WIN_END}'
+      AND stmt_last_dt IS NOT NULL
+    GROUP BY 1
+),
+calls_flagged AS (
     SELECT {NUM_KEY.format(c="acctid")} AS acct_key,      -- THE KEY CHANGE (D2)
            contactid,
            `date` AS call_dt,
@@ -294,23 +337,68 @@ WITH calls_flagged AS (
       AND acctid IS NOT NULL
       AND effdt >= '{EFFDT_SCAN_START}' AND effdt < '{EFFDT_HARD_END}'   -- D8 bounded scan
 ),
+calls_anchored AS (
+    -- attach the statement anchor and derive the statement-cycle attributes.
+    -- days_since_stmt_dt unit = days; in_stmt_window is the re-anchor keep flag.
+    SELECT c.*,
+           a.stmt_dt,
+           datediff(c.call_dt, a.stmt_dt) AS days_since_stmt_dt,
+           CASE WHEN a.stmt_dt IS NOT NULL
+                 AND datediff(c.call_dt, a.stmt_dt) >= 0
+                 AND datediff(c.call_dt, a.stmt_dt) < {STMT_WINDOW_DAYS}
+                THEN 1 ELSE 0 END AS in_stmt_window,        -- re-anchor keep flag: call in [stmt_dt, stmt_dt+56)
+           CASE WHEN a.stmt_dt IS NOT NULL
+                 AND datediff(c.call_dt, a.stmt_dt) >= 0
+                 AND datediff(c.call_dt, a.stmt_dt) < {STMT_DUE_DAY}
+                THEN 1 ELSE 0 END AS pre_due_f,             -- days 0-24: run-up to the payment due date
+           CASE WHEN a.stmt_dt IS NOT NULL
+                 AND datediff(c.call_dt, a.stmt_dt) >= {STMT_DUE_DAY}
+                 AND datediff(c.call_dt, a.stmt_dt) < {STMT_WINDOW_DAYS}
+                THEN 1 ELSE 0 END AS post_due_f,            -- days 25-55: past-due, until the next statement lands
+           CASE WHEN a.stmt_dt IS NULL
+                 OR datediff(c.call_dt, a.stmt_dt) < 0
+                 OR datediff(c.call_dt, a.stmt_dt) >= {STMT_WINDOW_DAYS}
+                THEN 'outside 0-55 days'
+                ELSE lpad(cast(floor(datediff(c.call_dt, a.stmt_dt) / {STMT_BUCKET_WIDTH})
+                               * {STMT_BUCKET_WIDTH} AS string), 2, '0')
+                     || '-'
+                     || lpad(cast(floor(datediff(c.call_dt, a.stmt_dt) / {STMT_BUCKET_WIDTH})
+                               * {STMT_BUCKET_WIDTH} + {STMT_BUCKET_WIDTH} - 1 AS string), 2, '0')
+                     || CASE WHEN datediff(c.call_dt, a.stmt_dt) < {STMT_DUE_DAY}
+                             THEN ' pre-due' ELSE ' post-due' END
+           END AS stmt_5day_bucket,                          -- e.g. '00-04 pre-due' .. '50-54 post-due'; due_day=25
+           CASE WHEN a.stmt_dt IS NULL
+                 OR datediff(c.call_dt, a.stmt_dt) < 0
+                 OR datediff(c.call_dt, a.stmt_dt) >= {STMT_WINDOW_DAYS}
+                THEN NULL
+                ELSE cast(floor(datediff(c.call_dt, a.stmt_dt) / {STMT_BUCKET_WIDTH})
+                          * {STMT_BUCKET_WIDTH} AS int)
+           END AS stmt_5day_bucket_start                     -- unit: days; the bucket's low edge, for ordering
+    FROM calls_flagged c
+    LEFT JOIN stmt_anchor a ON a.acct_key = c.acct_key
+),
 episodes_std AS (
+    -- first-inbound-per-day survivor, RE-ANCHORED to the statement window.
+    -- Only in_stmt_window = 1 call-days can be a standard episode.
     SELECT contactid
     FROM (
         SELECT contactid,
                row_number() OVER (PARTITION BY acct_key, call_dt
                                   ORDER BY initiationtimestamp) AS rn
-        FROM calls_flagged
+        FROM calls_anchored
         WHERE acct_key IS NOT NULL AND acct_key <> ''
           AND is_biz = 0
           AND within_effdt_cap = 1
+          AND in_stmt_window = 1                             -- RE-ANCHOR: drop call-days outside any statement window
     )
     WHERE rn = 1
 )
 SELECT c.acct_key, c.contactid, c.call_dt, c.call_month,
        c.is_biz, c.within_effdt_cap, c.had_zero_pad,
+       c.stmt_dt, c.days_since_stmt_dt, c.in_stmt_window,
+       c.pre_due_f, c.post_due_f, c.stmt_5day_bucket, c.stmt_5day_bucket_start,
        CASE WHEN e.contactid IS NOT NULL THEN 1 ELSE 0 END AS is_episode_std
-FROM calls_flagged c
+FROM calls_anchored c
 LEFT JOIN episodes_std e ON e.contactid = c.contactid
 """)
 print(f"built {DB}.uc2_t16_02n_episodes")
@@ -381,7 +469,9 @@ print(f"built {DB}.uc2_t16_03n_signals")
 spark.sql(f"""
 CREATE OR REPLACE TABLE {DB}.uc2_t16_04n_outcomes AS
 WITH episodes_exaa AS (
-    SELECT c.acct_key, c.contactid, c.call_dt, c.call_month
+    SELECT c.acct_key, c.contactid, c.call_dt, c.call_month,
+           c.stmt_dt, c.days_since_stmt_dt,
+           c.pre_due_f, c.post_due_f, c.stmt_5day_bucket, c.stmt_5day_bucket_start
     FROM {DB}.uc2_t16_02n_episodes c
     LEFT JOIN {DB}.uc2_t16_01n_populations p ON p.acct_key = c.acct_key
     WHERE c.is_episode_std = 1
@@ -399,6 +489,8 @@ pay_lead AS (
 ),
 ep AS (
     SELECT e.acct_key, e.contactid, e.call_dt, e.call_month,
+           e.stmt_dt, e.days_since_stmt_dt,
+           e.pre_due_f, e.post_due_f, e.stmt_5day_bucket, e.stmt_5day_bucket_start,
            CASE WHEN
                   (s.pay_dt IS NOT NULL
                    AND s.pay_dt >= e.call_dt
@@ -453,6 +545,8 @@ callday AS (
 ),
 esig AS (
     SELECT e.acct_key, e.contactid, e.call_dt, e.captured,
+           e.stmt_dt, e.days_since_stmt_dt,
+           e.pre_due_f, e.post_due_f, e.stmt_5day_bucket, e.stmt_5day_bucket_start,
            coalesce(x.language_group, 'g. no payment-related language') AS language_group,
            coalesce(x.pay_f, 0)      AS pay_f,
            coalesce(x.deceased_f, 0) AS deceased_f,
@@ -475,6 +569,8 @@ esig_acct AS (
     FROM esig
 )
 SELECT a.acct_key, a.contactid, a.call_dt,
+       a.stmt_dt, a.days_since_stmt_dt,
+       a.pre_due_f, a.post_due_f, a.stmt_5day_bucket, a.stmt_5day_bucket_start,
        a.captured, a.language_group, a.pay_f, a.deceased_f, a.exec_f, a.has_tx,
        a.callday_bucket, a.is_addressable,
        a.any_captured, a.any_leaked_intent, a.deceased_acct,
