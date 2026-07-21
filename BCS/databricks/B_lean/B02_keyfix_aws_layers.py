@@ -469,7 +469,18 @@ tx AS (
                      'bank routing|routing number|check number|checkbook|a check for|that check|on the check') THEN 1 ELSE 0 END) AS exec_f
     FROM {TX} t
     JOIN drivers d ON t.contactid = d.contactid
-    WHERE t.effdt >= '{EFFDT_CAP_START}' AND t.effdt < '{EFFDT_CAP_END}'
+      -- STORY-B FIX 2026-07-21: the transcript scan was bounded to EFFDT_CAP_END
+      -- (Feb 2 = January only), while the call window was widened to
+      -- CALL_WIN_END + STMT_WINDOW_DAYS (Mar 29). That left every February/March
+      -- statement-window caller with NO transcript signals (pay_f/promise_f = 0),
+      -- so they could be captured_sas (transcript-free ledger field) but never
+      -- leaked_sas (needs pay_f) - under-counting leaked_sas/W_s on the whole
+      -- Feb/Mar mass. The join is on contactid (each transcript already belongs to
+      -- its own call), so effdt here is only a scan-pruning bound; widening it to
+      -- MATCH the call window is safe and cannot mis-attach signals across calls.
+      -- Reuses the exact call-window expression so the two stay in lockstep.
+    WHERE t.effdt >= '{EFFDT_CAP_START}'
+      AND t.effdt < date_add(DATE '{CALL_WIN_END}', {STMT_WINDOW_DAYS})
       AND t.content IS NOT NULL
       AND t.participantid = 'CUSTOMER'
       AND regexp_like(lower(t.content),

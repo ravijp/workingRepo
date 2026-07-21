@@ -168,6 +168,32 @@ spark.sql(f"""
 
 # COMMAND ----------
 
+# STORY-B vs ISHANT'S VERIFIED PIVOT (same 186,013 SAS-ledger base, account grain).
+# OUT is already scoped to in_sas_ledger, so this is his exact frame. His verified
+# targets: pre-due (0-24d) 6,778 accts, post-due (25-55d) 19,025 accts,
+# overall in-window 23,713 calls. This is the apples-to-apples comparison the
+# scrutiny flagged as the one CANNOT-TELL to close (post_due_f is carried on 04s
+# but was never counted). Account grain matches his accts_called_* flags.
+spark.sql(f"""
+    SELECT 'pre-due accts (0-24d) vs Ishant 6,778'  AS slice_vs_ishant,
+           count(DISTINCT CASE WHEN pre_due_f  = 1 THEN acct_key END) AS accounts,
+           count_if(pre_due_f = 1)                                    AS episodes
+    FROM {OUT}
+    UNION ALL
+    SELECT 'post-due accts (25-55d) vs Ishant 19,025',
+           count(DISTINCT CASE WHEN post_due_f = 1 THEN acct_key END),
+           count_if(post_due_f = 1)
+    FROM {OUT}
+    UNION ALL
+    SELECT 'overall in-window accts vs Ishant 23,713 calls',
+           count(DISTINCT acct_key),
+           count(*)
+    FROM {OUT}
+    ORDER BY slice_vs_ishant
+""").show(50, truncate=False)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Block 3. Language groups with export dollars
 # MAGIC
