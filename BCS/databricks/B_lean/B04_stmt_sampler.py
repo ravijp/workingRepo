@@ -457,9 +457,22 @@ export_df = spark.sql(f"""
     WITH turns_rows AS (
         SELECT t.contactid, t.beginmillis,
                concat(t.participantid, ': ',
-                      -- UNMASK EDIT POINT (owner-gated): the ONLY place masking
-                      -- changes. Replace the regexp_replace(...) below with
-                      -- t.content ONLY on the owner's explicit instruction.
+                      -- ============================================================
+                      -- REDACTION (digit masking) - ON by default.
+                      -- What it does: regexp_replace collapses every run of 3+
+                      -- consecutive digits in the transcript text to '###'. This
+                      -- redacts account numbers, card numbers, SSNs, phone numbers,
+                      -- and dollar amounts before any excerpt leaves in a grid/CSV.
+                      -- Words are untouched, so phrase/intent discovery is unaffected.
+                      -- Why: excerpts are the only row-level text this pipeline
+                      -- emits; masking removes PII spill from clipboard/CSV files.
+                      -- THE ONLY UNMASK POINT (owner-gated): to export UNMASKED
+                      -- text, replace the regexp_replace(...) line below with just
+                      --     t.content
+                      -- and NOTHING else. Do this ONLY on the owner's explicit
+                      -- instruction (it is a governance decision, not a code tidy).
+                      -- Leave masking ON unless told otherwise.
+                      -- ============================================================
                       regexp_replace(t.content, '[0-9]{{3,}}', '###')
                ) AS line
         FROM {TX} t
