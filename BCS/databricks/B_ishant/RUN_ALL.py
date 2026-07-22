@@ -4,6 +4,19 @@
 # One notebook to run the whole B_ishant pipeline (Ishant's client-blessed
 # methodology). No copy-paste - each step %run's a sibling in this session.
 #
+# !!! TABLE COLLISION NOTICE (owner's explicit intent, 2026-07-22) !!!
+#   This pipeline reuses B_lean's table names (uc2_t16_*) and every CREATE is
+#   CREATE OR REPLACE TABLE. Running it OVERWRITES the live B_lean tables
+#   uc2_t16_00n_acct_monthly and uc2_t16_01s_populations_<vintage>. That is the
+#   owner's intent - one t16 table set, no duplicate uc2_ish_* tables. If you need
+#   B_lean's exact 01s shape preserved, snapshot it before Run All.
+#   Tables written (all CREATE OR REPLACE):
+#     uc2_t16_00n_acct_monthly              (01; overwrites B_lean)
+#     uc2_t16_01s_populations_<vintage>     (01 builds, 02 folds; overwrites B_lean)
+#     uc2_t16_02n_episodes                  (02; call-grain window table)
+#     uc2_t16_03r_roll_<vintage>            (03; derived roll cut, t16-style name)
+#     uc2_t16_04t_frame_<vintage>           (04; transcript-review frame)
+#
 # HOW TO RUN
 #   Upload the B_ishant/ folder into Databricks (Workspace > Import > folder, or
 #   Repos), open THIS notebook from inside that folder, attach a cluster, Run All.
@@ -36,7 +49,7 @@ print("[B_ishant/RUN_ALL.py] Config:",
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1 - accounts + SAS funnel (610,183 -> 186,013 = in_sas_ledger)
+# MAGIC ## Step 1 - accounts + SAS funnel (610,183 -> 186,013 = in_sas_ledger) -> uc2_t16_00n_acct_monthly, uc2_t16_01s_populations_<vintage>
 
 # COMMAND ----------
 
@@ -45,7 +58,7 @@ print("[B_ishant/RUN_ALL.py] Config:",
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 2 - statement-window classification (single-max anchor; 19,025 post-due)
+# MAGIC ## Step 2 - statement-window classification (single-max anchor; 19,025 post-due) -> uc2_t16_02n_episodes + folds uc2_t16_01s_populations_<vintage>
 
 # COMMAND ----------
 
@@ -54,7 +67,7 @@ print("[B_ishant/RUN_ALL.py] Config:",
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3 - roll + impairment (DQ1->DQ2 ~2,879 vs 3,306; ECL / CO / gross NCL; STG_CD_M2)
+# MAGIC ## Step 3 - roll + impairment (DQ1->DQ2 ~2,879 vs 3,306; ECL / CO / gross NCL; STG_CD_M2) -> uc2_t16_03r_roll_<vintage>
 
 # COMMAND ----------
 
@@ -63,7 +76,7 @@ print("[B_ishant/RUN_ALL.py] Config:",
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4 - transcript sampling frame (feeds Copilot discovery)
+# MAGIC ## Step 4 - transcript sampling frame (feeds Copilot discovery) -> uc2_t16_04t_frame_<vintage>
 
 # COMMAND ----------
 

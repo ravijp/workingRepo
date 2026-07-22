@@ -3,15 +3,26 @@
 # B_ishant / 01_accounts.py
 # The account layer + the SAS funnel (Ishant's client-blessed methodology).
 #
+# !!! TABLE COLLISION NOTICE (owner's explicit intent, 2026-07-22) !!!
+#   This pipeline now writes the SAME table names as B_lean (uc2_t16_*) and every
+#   CREATE is CREATE OR REPLACE TABLE. Re-running B_ishant OVERWRITES the live
+#   B_lean tables uc2_t16_00n_acct_monthly and uc2_t16_01s_populations_<vintage>.
+#   That is deliberate - the owner wants ONE set of t16 tables, not duplicates.
+#   If you need B_lean's exact 01s shape preserved, snapshot it before running.
+#
 # WHAT THIS BUILDS
-#   1. uc2_ish_00n_acct_monthly  - monthly FMT delinquency/balance layer
+#   1. uc2_t16_00n_acct_monthly  - monthly FMT delinquency/balance layer
 #                                  (reused verbatim from B_lean/B02 K3).
-#   2. uc2_ish_01s_ledger        - the SAS-csv funnel:
+#   2. uc2_t16_01s_populations_<vintage> - the SAS-csv funnel:
 #                                  610,183 -> 202,479 DQ1 -> 186,848 +CPC
 #                                  -> 186,013 non-chargeoff = in_sas_ledger,
 #                                  plus every M1/M2/M3 delinquency / ECL / stage /
 #                                  charge-off column the roll + impairment step needs,
 #                                  and captured_sas (negative PAYMT in M1 or M2).
+#                                  02_windows.py then RE-CREATES this same table to
+#                                  fold on the account-level call-window flags, so
+#                                  the funnel columns AND accts_called_* live on ONE
+#                                  table (matching Ishant's B01 shape).
 #
 # METHODOLOGY NOTE (why this differs from our old B_lean chain)
 #   The client-blessed approach (Ishant, endorsed by Anupam 21-Jul) keeps the
@@ -62,7 +73,12 @@ MONTH_WIN_END = _mm(_a0, 3).strftime("%Y%m%d")      # 20250401 (exclusive)
 # --- the numeric account key rule (repo convention: strip zero-pad via bigint) --
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"
 
+# Table names (B_lean-shared; CREATE OR REPLACE overwrites B_lean's live tables).
+T_00N = f"{DB}.uc2_t16_00n_acct_monthly"
+T_01S = f"{DB}.uc2_t16_01s_populations_{ANCHOR_YM}"
+
 print(f"[B_ishant/01_accounts.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
+print(f"[B_ishant/01_accounts.py] WRITES B_lean-shared t16 tables (CREATE OR REPLACE): {T_00N}, {T_01S}")
 # ---------------------------------------------------------------------
 # end of SETUP
 # ---------------------------------------------------------------------
@@ -87,7 +103,7 @@ print("[B_ishant/01_accounts.py] preconditions OK: FMT / call / transcript reach
 # amount bands; eom_* = end-of-month snapshot; payment/charge-off dates.
 # ---------------------------------------------------------------------
 spark.sql(f"""
-CREATE OR REPLACE TABLE {DB}.uc2_ish_00n_acct_monthly AS
+CREATE OR REPLACE TABLE {T_00N} AS
 WITH snap AS (
     SELECT extnl_acct_id,
            substr(eff_dt, 1, 6) AS ym,
@@ -110,6 +126,8 @@ WITH snap AS (
            try_cast(chrgoff_amt AS double) AS co_amt,
            clnt_prdct_cd,
            try_cast(cr_lmt_origl_amt AS double) AS cr_lmt_origl_amt,
+           try_cast(paymt_min_due_amt AS double) AS min_due_amt,     -- fmt PAYMT_MIN_DUE_AMT (dict: re-age cure rule)
+           try_cast(paymt_last_amt AS double) AS paymt_last_amt,     -- fmt PAYMT_LAST_AMT (last payment amount)
            coalesce(try_cast(paymt_last_dt AS date),
                     try_to_date(cast(paymt_last_dt AS string), 'ddMMMyyyy')) AS pay_dt,
            coalesce(try_cast(atmtc_paymt_last_dt AS date),
@@ -131,25 +149,33 @@ SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,   -- numeric-key rule
        min(CASE WHEN bucket = 1 THEN eff_dt END) AS first_b1_dt,
        max_by(clnt_prdct_cd, eff_dt) AS eom_cpc,
        max_by(cr_lmt_origl_amt, eff_dt) AS eom_cr_lmt_origl_amt,
+       max_by(min_due_amt, eff_dt) AS min_due_amt,           -- eom minimum due (fmt PAYMT_MIN_DUE_AMT)
+       max_by(paymt_last_amt, eff_dt) AS paymt_last_amt,     -- eom last payment amount (fmt PAYMT_LAST_AMT)
        max(pay_dt) AS pay_dt,
        max(auto_dt) AS auto_dt,
        max(nsf_dt) AS nsf_dt
 FROM snap
 GROUP BY 1, 2
 """)
-print(f"[B_ishant/01_accounts.py] built {DB}.uc2_ish_00n_acct_monthly")
+print(f"[B_ishant/01_accounts.py] built {T_00N}")
 
 print("[B_ishant/01_accounts.py] 00n monthly account count by ym:")
 display(spark.sql(f"""
     SELECT ym, count(1) AS accts, count_if(eom_bucket = 1) AS eom_dq1
-    FROM {DB}.uc2_ish_00n_acct_monthly GROUP BY ym ORDER BY ym
+    FROM {T_00N} GROUP BY ym ORDER BY ym
 """))
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# 01s. The SAS funnel = uc2_ish_01s_ledger.
+# 01s. The SAS funnel = uc2_t16_01s_populations_<vintage> (first pass).
 # Grain: one row per SAS export account (610,183 for 202501).
+#
+# NOTE ON THE FOLD: this builds the funnel + delinquency/ECL/stage/charge-off
+# columns AND the account-grain review columns (payment/balance/limit dates from
+# 00n). 02_windows.py then CREATE-OR-REPLACEs this SAME table to add the
+# account-level accts_called_25_f / _31_f / _overall_f window flags, so the final
+# 01s table carries everything on one grain - Ishant's B01 shape.
 #
 # The three funnel predicates (identical in ours and Ishant's code):
 #   wf_dq1    = DLNQT_CD_M1 = 1                          (DQ-1 at Jan EOM)
@@ -173,7 +199,7 @@ csv_df = (spark.read.format("csv")
 csv_df.createOrReplaceTempView("_sas_csv")
 
 spark.sql(f"""
-CREATE OR REPLACE TABLE {DB}.uc2_ish_01s_ledger AS
+CREATE OR REPLACE TABLE {T_01S} AS
 WITH k AS (
     SELECT r.*, try_cast(EXTNL_ACCT_ID AS bigint) AS acct_num
     FROM _sas_csv r
@@ -185,6 +211,16 @@ f AS (
            (CHRGOFF_RSN_M1 IS NULL OR trim(CHRGOFF_RSN_M1) = ''
             OR upper(trim(CHRGOFF_RSN_M1)) IN ('PLY', 'BLANK')) AS wf_non_co
     FROM k
+),
+-- 00n January snapshot: surface the FMT-side review columns onto the ledger.
+-- clnt_prdct_cd (eom_cpc) is the FMT product code that drives cpc_class below;
+-- pay_dt/auto_dt/nsf_dt/max_bucket/eom_bucket/eom_bal are account-grain context.
+mon AS (
+    SELECT acct_key, eom_cpc, max_bucket, eom_bucket, eom_bal,
+           eom_cr_lmt_origl_amt, min_due_amt, paymt_last_amt,
+           pay_dt, auto_dt, nsf_dt
+    FROM {T_00N}
+    WHERE ym = '{ANCHOR_YM}'
 )
 SELECT cast(f.acct_num AS string) AS acct_key,        -- numeric-key rule
        f.acct_num,
@@ -222,17 +258,46 @@ SELECT cast(f.acct_num AS string) AS acct_key,        -- numeric-key rule
        f.CO_8M_FLAG AS co_8m_flag, f.CO_10M_FLAG AS co_10m_flag, f.CO_12M_FLAG AS co_12m_flag,
        f.CHRGOFF_RSN_M1 AS chrgoff_rsn_m1,
        f.CPC_FLAG_NW AS cpc_flag_nw,
-       -- CPC / department class labels (for the ex-AA / GM / Bronco / CoBrand cuts)
+       -- ============ REVIEW COLUMNS (account grain) ============
+       -- cpc_class = the CPC / department class. Replicates B_lean/B02 K4's CASE
+       -- on the FMT product code eom_cpc (clnt_prdct_cd), NOT the SAS CPC_FLAG_NW.
+       -- Buckets: AA / GM / Bronco / Biz / CoBrand / PLCC / OTHER.
        CASE
-         WHEN f.CPC_FLAG_NW IS NULL OR trim(f.CPC_FLAG_NW) = '' THEN 'BLANK'
-         ELSE upper(trim(f.CPC_FLAG_NW))
+         WHEN mon.eom_cpc IN ('AA2','BC5','BA5','AA1','AC1','AM1','AC2','AM2',
+                              'AA3','AC3','AM3','AA4','AC4','AM4')       THEN 'AA'
+         WHEN mon.eom_cpc IN ('BGC','BGM','CGM','GMR')                   THEN 'GM'
+         WHEN mon.eom_cpc IN ('FBS','IBS','U1C','U2C','U3C')             THEN 'Bronco'
+         WHEN mon.eom_cpc IN ('BHA','BJT','BJC','BFR','BWY','BBB')       THEN 'Biz'
+         WHEN mon.eom_cpc IN ('GAP','GP2','ONV','ON2','BRP','BR2','ATH','AT2',
+                              'GPC','G2C','ONC','O2C','BRC','B2C','ATC','A2C') THEN 'CoBrand'
+         WHEN mon.eom_cpc IN ('8GP','8ON','8BR','8AT','9GP','9ON','9BR','9AT') THEN 'PLCC'
+         ELSE 'OTHER'
        END AS cpc_class,
+       mon.eom_cpc AS eom_cpc,                              -- FMT product code (clnt_prdct_cd)
+       mon.max_bucket AS max_bucket,                        -- worst past-due bucket in Jan
+       mon.eom_bucket AS eom_bucket,                        -- Jan end-of-month bucket
+       mon.eom_bal AS eom_bal,                              -- Jan end-of-month balance (FMT)
+       mon.eom_cr_lmt_origl_amt AS eom_cr_lmt_origl_amt,    -- FMT original credit limit
+       mon.min_due_amt AS min_due_amt,                      -- minimum due (fmt PAYMT_MIN_DUE_AMT; dict: re-age cure rule)
+       mon.paymt_last_amt AS paymt_last_amt,                -- last payment amount (fmt PAYMT_LAST_AMT)
+       mon.pay_dt AS pay_dt,                                -- last payment date (fmt PAYMT_LAST_DT)
+       mon.auto_dt AS auto_dt,                              -- last auto-payment date (FMT)
+       mon.nsf_dt AS nsf_dt,                                -- last NSF payment date (FMT)
+       -- credit-limit utilization at M1 = EOP balance / credit limit (ability signal)
+       CASE WHEN try_cast(f.CR_LMT_M1 AS double) > 0
+            THEN try_cast(f.EOP_BAL_M1 AS double) / try_cast(f.CR_LMT_M1 AS double)
+            ELSE NULL END AS utilization_m1,
+       -- ability signal: last payment amount vs minimum due (paid >= min due = curing)
+       CASE WHEN mon.min_due_amt > 0
+            THEN mon.paymt_last_amt / mon.min_due_amt
+            ELSE NULL END AS last_pay_vs_min_due,
        -- captured_sas = a negative PAYMT_AMT in M1 or M2 (payment landed)
        (coalesce(try_cast(f.PAYMT_AMT_M1 AS double), 0) < 0
         OR coalesce(try_cast(f.PAYMT_AMT_M2 AS double), 0) < 0) AS captured_sas
 FROM f
+LEFT JOIN mon ON mon.acct_key = cast(f.acct_num AS string)
 """)
-print(f"[B_ishant/01_accounts.py] built {DB}.uc2_ish_01s_ledger")
+print(f"[B_ishant/01_accounts.py] built {T_01S} (first pass; 02_windows.py folds on the call-window flags)")
 
 # COMMAND ----------
 
@@ -248,7 +313,7 @@ SELECT
     count_if(in_sas_ledger) AS ledger,
     count_if(captured_sas) AS captured_sas_all,
     count_if(in_sas_ledger AND captured_sas) AS captured_sas_ledger
-FROM {DB}.uc2_ish_01s_ledger
+FROM {T_01S}
 """).first()
 
 print("[B_ishant/01_accounts.py] SAS funnel (Ishant Filter 1) - actual vs expected (202501):")
@@ -261,14 +326,14 @@ print(f"  captured_sas (ledger) : {_f['captured_sas_ledger']:>10,}   (ref ~125,2
 
 print("[B_ishant/01_accounts.py] funnel as a table:")
 display(spark.sql(f"""
-SELECT 1 AS stage_order, '01. Total accounts'              AS stage, count(1)                       AS accts FROM {DB}.uc2_ish_01s_ledger
+SELECT 1 AS stage_order, '01. Total accounts'              AS stage, count(1)                       AS accts FROM {T_01S}
 UNION ALL
-SELECT 2, '02. DQ-1 (DLNQT_CD_M1=1)',            count_if(wf_dq1)                FROM {DB}.uc2_ish_01s_ledger
+SELECT 2, '02. DQ-1 (DLNQT_CD_M1=1)',            count_if(wf_dq1)                FROM {T_01S}
 UNION ALL
-SELECT 3, '03. + CPC eligible',                  count_if(wf_dq1 AND wf_cpc)     FROM {DB}.uc2_ish_01s_ledger
+SELECT 3, '03. + CPC eligible',                  count_if(wf_dq1 AND wf_cpc)     FROM {T_01S}
 UNION ALL
-SELECT 4, '04. + non-chargeoff = in_sas_ledger', count_if(in_sas_ledger)         FROM {DB}.uc2_ish_01s_ledger
+SELECT 4, '04. + non-chargeoff = in_sas_ledger', count_if(in_sas_ledger)         FROM {T_01S}
 ORDER BY stage_order
 """))
 
-print("[B_ishant/01_accounts.py] 01_accounts complete: uc2_ish_00n_acct_monthly, uc2_ish_01s_ledger")
+print(f"[B_ishant/01_accounts.py] 01_accounts complete: uc2_t16_00n_acct_monthly, uc2_t16_01s_populations_{ANCHOR_YM}")

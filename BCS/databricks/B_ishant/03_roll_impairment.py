@@ -3,6 +3,11 @@
 # B_ishant / 03_roll_impairment.py
 # The roll + impairment headline (the client funding number).
 #
+# TABLE NOTE (owner's intent, 2026-07-22): reads the folded B_lean-shared ledger
+#   uc2_t16_01s_populations_<vintage> (funnel + accts_called_* on one table) and
+#   writes uc2_t16_03r_roll_<vintage> (a derived roll cut; no B_lean equivalent,
+#   t16-style name for consistency). CREATE OR REPLACE, so re-runs overwrite.
+#
 # THE ROLL
 #   DQ1 -> DQ2 roll = dlnqt_cd_m1 = 1 AND dlnqt_cd_m2 = 2, measured on the
 #   post-due-called ledger cohort (the 19,025 accounts from 02_windows.py).
@@ -54,6 +59,10 @@ except NameError:
 DB = f"{CATALOG}.{SCHEMA}"
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"
 
+# Table names (B_lean-shared ledger read; t16-style roll table written).
+T_01S = f"{DB}.uc2_t16_01s_populations_{ANCHOR_YM}"
+T_03R = f"{DB}.uc2_t16_03r_roll_{ANCHOR_YM}"
+
 print(f"[B_ishant/03_roll_impairment.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
 # ---------------------------------------------------------------------
 # end of SETUP
@@ -62,11 +71,11 @@ print(f"[B_ishant/03_roll_impairment.py] SETUP OK: vintage {ANCHOR_YM}; layers -
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# Preconditions: 02_windows.py built the fixed population with window flags.
+# Preconditions: 02_windows.py folded the window flags into the ledger.
 # ---------------------------------------------------------------------
-if not spark.catalog.tableExists(f"{DB}.uc2_ish_02s_pop"):
-    raise AssertionError(f"[B_ishant/03_roll_impairment.py] {DB}.uc2_ish_02s_pop missing - run 02_windows.py first")
-print("[B_ishant/03_roll_impairment.py] preconditions OK: uc2_ish_02s_pop present")
+if not spark.catalog.tableExists(T_01S):
+    raise AssertionError(f"[B_ishant/03_roll_impairment.py] {T_01S} missing - run 01/02 first")
+print(f"[B_ishant/03_roll_impairment.py] preconditions OK: {T_01S} present (folded)")
 
 # COMMAND ----------
 
@@ -75,7 +84,7 @@ print("[B_ishant/03_roll_impairment.py] preconditions OK: uc2_ish_02s_pop presen
 # DQ1 -> DQ2. Carries the impairment / stage columns forward for the cuts.
 # ---------------------------------------------------------------------
 spark.sql(f"""
-CREATE OR REPLACE TABLE {DB}.uc2_ish_03r_roll AS
+CREATE OR REPLACE TABLE {T_03R} AS
 SELECT acct_key, acct_num,
        dlnqt_cd_m1, dlnqt_cd_m2, dlnqt_cd_m3,
        ecl_m1, ecl_m2, ecl_m3,
@@ -84,13 +93,13 @@ SELECT acct_key, acct_num,
        chrgoff_8m_amt, chrgoff_10m_amt, chrgoff_12m_amt,
        gross_loss_8m_amt, gross_loss_10m_amt, gross_loss_12m_amt,
        cpc_class,
-       accts_called_post_f,
+       accts_called_31_f,               -- 31 = post-due (day 25-55)
        (try_cast(dlnqt_cd_m1 AS int) = 1 AND try_cast(dlnqt_cd_m2 AS int) = 2) AS rolled_dq1_dq2
-FROM {DB}.uc2_ish_02s_pop
+FROM {T_01S}
 WHERE in_sas_ledger
-  AND accts_called_post_f = 1     -- the post-due-called ledger base (~19,025)
+  AND accts_called_31_f = 1     -- the post-due-called ledger base (~19,025)
 """)
-print(f"[B_ishant/03_roll_impairment.py] built {DB}.uc2_ish_03r_roll")
+print(f"[B_ishant/03_roll_impairment.py] built {T_03R}")
 
 # COMMAND ----------
 
@@ -100,7 +109,7 @@ print(f"[B_ishant/03_roll_impairment.py] built {DB}.uc2_ish_03r_roll")
 _r = spark.sql(f"""
 SELECT count(1) AS post_due_base,
        count_if(rolled_dq1_dq2) AS roll_dq1_dq2
-FROM {DB}.uc2_ish_03r_roll
+FROM {T_03R}
 """).first()
 print("[B_ishant/03_roll_impairment.py] DQ1->DQ2 roll on the post-due-called ledger:")
 print(f"  post-due-called base        : {_r['post_due_base']:>8,}   expected ~19,025")
@@ -127,7 +136,7 @@ SELECT 1 AS row_order, 'A. roll cohort (DQ1->DQ2)' AS base,
        round(sum(chrgoff_8m_amt), 0)  AS gross_ncl_8m,
        round(sum(chrgoff_10m_amt), 0) AS gross_ncl_10m,
        round(sum(chrgoff_12m_amt), 0) AS gross_ncl_12m
-FROM {DB}.uc2_ish_03r_roll WHERE rolled_dq1_dq2
+FROM {T_03R} WHERE rolled_dq1_dq2
 UNION ALL
 SELECT 2, 'B. post-due-called base (~19,025)',
        count(1),
@@ -136,7 +145,7 @@ SELECT 2, 'B. post-due-called base (~19,025)',
        count_if(try_cast(co_10m_flag AS int) = 1),
        count_if(try_cast(co_12m_flag AS int) = 1),
        round(sum(chrgoff_8m_amt), 0), round(sum(chrgoff_10m_amt), 0), round(sum(chrgoff_12m_amt), 0)
-FROM {DB}.uc2_ish_03r_roll
+FROM {T_03R}
 ORDER BY row_order
 """))
 
@@ -144,7 +153,7 @@ _i = spark.sql(f"""
 SELECT round(sum(ecl_m2), 0) AS ecl_m2, round(sum(ecl_m3), 0) AS ecl_m3,
        count_if(try_cast(co_12m_flag AS int) = 1) AS co_12m,
        round(sum(chrgoff_12m_amt), 0) AS gross_ncl_12m
-FROM {DB}.uc2_ish_03r_roll WHERE rolled_dq1_dq2
+FROM {T_03R} WHERE rolled_dq1_dq2
 """).first()
 print("[B_ishant/03_roll_impairment.py] roll-cohort headline - actual vs meeting reference:")
 print(f"  ECL_M2 sum       : {_i['ecl_m2']:>14,.0f}   ref ~$4.96M")
@@ -166,7 +175,7 @@ SELECT CASE WHEN stg_cd_m2 IS NULL OR trim(stg_cd_m2) = '' THEN '(blank)'
        round(sum(ecl_m2), 0) AS ecl_m2_sum,
        round(sum(ecl_m3), 0) AS ecl_m3_sum,
        count_if(try_cast(co_12m_flag AS int) = 1) AS co_12m_cnt
-FROM {DB}.uc2_ish_03r_roll WHERE rolled_dq1_dq2
+FROM {T_03R} WHERE rolled_dq1_dq2
 GROUP BY 1 ORDER BY 1
 """))
 
@@ -185,4 +194,4 @@ print("[B_ishant/03_roll_impairment.py] [OPEN: HRAM flag source not in code] "
       "HRAM flag not present in Ishant's SQL; see the hram_flag_refit_M2 / "
       "hram_flag_apollo_M2 SAS columns to complete this. Not fabricated.")
 
-print("[B_ishant/03_roll_impairment.py] 03_roll_impairment complete: uc2_ish_03r_roll")
+print("[B_ishant/03_roll_impairment.py] 03_roll_impairment complete: uc2_t16_03r_roll")
