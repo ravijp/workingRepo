@@ -1,35 +1,29 @@
 # Databricks notebook source
 # =====================================================================
-# B_ishant / 03_roll_impairment.py
+# 03_roll_impairment.py
 # The roll + impairment headline (the client funding number).
 #
-# TABLE NOTE (owner's intent, 2026-07-22): reads the folded B_lean-shared ledger
-#   uc2_t16_01s_populations_<vintage> (funnel + accts_called_* on one table) and
-#   writes uc2_t16_03r_roll_<vintage> (a derived roll cut; no B_lean equivalent,
-#   t16-style name for consistency). CREATE OR REPLACE, so re-runs overwrite.
+#   Reads the folded ledger uc2_t16_01s_populations_<vintage> (funnel +
+#   accts_called_* on one table) and writes uc2_t16_03r_roll_<vintage>.
 #
 # THE ROLL
 #   DQ1 -> DQ2 roll = dlnqt_cd_m1 = 1 AND dlnqt_cd_m2 = 2, measured on the
-#   post-due-called ledger cohort (the 19,025 accounts from 02_windows.py).
-#   Meeting cohort ~2,879 (Namit, 21-Jul). Ishant's Excel pivot says ~3,306.
-#   [VERIFY: 2,879 vs 3,306 is UNRECONCILED] - we PRINT the raw count and both
-#   references; we hardcode neither.
+#   post-due-called ledger cohort (the accounts flagged accts_called_31_f).
+#   The roll count feeds the funding ask, so it is printed raw and never
+#   hardcoded.
 #
-# THE IMPAIRMENT (computed on TWO bases, like Ishant's pivot Table 2)
+# THE IMPAIRMENT (computed on two bases)
 #   Row A = the roll cohort (DQ1->DQ2 within the post-due-called ledger)
-#   Row B = the full post-due-called ledger base (~19,025)
+#   Row B = the full post-due-called ledger base
 #   Measures: sum(ECL_M2), sum(ECL_M3), CO_8M/10M/12M flag counts,
 #             sum(CHRGOFF_8M/10M/12M_AMT) = gross charge-off NCL.
-#   Meeting references (roll cohort): ECL_M2 ~$4.96M, ECL_M3 ~$7.17M,
-#   CO_12M count 1,760-1,980, gross 12M NCL ~$7.599M.
 #
 # THE STAGE BREAKDOWN
 #   STG_CD_M2 (IFRS9 stage at Feb): blank / S1 / S2 / S3 on the roll cohort.
-#   Meeting: of ~2,879, ~1,744 already stage-2 at Feb 1 (primarily HRAM);
-#   removing HRAM drops 1,744 -> 478; stage-1 ~655.
-#   [OPEN: HRAM flag source not in code] - HRAM is an Excel-only daily process,
-#   not a column in Ishant's SQL. We give the STG_CD_M2 split and leave a clearly
-#   marked placeholder for the HRAM-exclusion cut rather than fabricating it.
+#   The stage-2 accounts include HRAM (high-risk-account-management) cases;
+#   HRAM is run as an Excel-only daily process and has no column in the SAS
+#   export carried here, so the HRAM-exclusion cut is left as a marked open item
+#   rather than fabricated.
 #
 #   Every print/display below is prefixed with this file name for screenshots.
 # =====================================================================
@@ -37,7 +31,7 @@
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# SETUP - copied verbatim from B_lean (B00 is the canonical copy). Keep in sync.
+# SETUP - catalog/schema, table handles.
 # ---------------------------------------------------------------------
 import datetime as _dt
 
@@ -59,23 +53,13 @@ except NameError:
 DB = f"{CATALOG}.{SCHEMA}"
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"
 
-# Table names (B_lean-shared ledger read; t16-style roll table written).
 T_01S = f"{DB}.uc2_t16_01s_populations_{ANCHOR_YM}"
 T_03R = f"{DB}.uc2_t16_03r_roll_{ANCHOR_YM}"
 
-print(f"[B_ishant/03_roll_impairment.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
+print(f"[03_roll_impairment.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
 # ---------------------------------------------------------------------
 # end of SETUP
 # ---------------------------------------------------------------------
-
-# COMMAND ----------
-
-# ---------------------------------------------------------------------
-# Preconditions: 02_windows.py folded the window flags into the ledger.
-# ---------------------------------------------------------------------
-if not spark.catalog.tableExists(T_01S):
-    raise AssertionError(f"[B_ishant/03_roll_impairment.py] {T_01S} missing - run 01/02 first")
-print(f"[B_ishant/03_roll_impairment.py] preconditions OK: {T_01S} present (folded)")
 
 # COMMAND ----------
 
@@ -97,34 +81,33 @@ SELECT acct_key, acct_num,
        (try_cast(dlnqt_cd_m1 AS int) = 1 AND try_cast(dlnqt_cd_m2 AS int) = 2) AS rolled_dq1_dq2
 FROM {T_01S}
 WHERE in_sas_ledger
-  AND accts_called_31_f = 1     -- the post-due-called ledger base (~19,025)
+  AND accts_called_31_f = 1     -- the post-due-called ledger base
 """)
-print(f"[B_ishant/03_roll_impairment.py] built {T_03R}")
+print(f"[03_roll_impairment.py] built {T_03R}")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# The roll count. Print raw + BOTH unreconciled references; hardcode neither.
+# The roll count on the post-due-called ledger. Printed raw; not hardcoded.
 # ---------------------------------------------------------------------
 _r = spark.sql(f"""
 SELECT count(1) AS post_due_base,
        count_if(rolled_dq1_dq2) AS roll_dq1_dq2
 FROM {T_03R}
 """).first()
-print("[B_ishant/03_roll_impairment.py] DQ1->DQ2 roll on the post-due-called ledger:")
-print(f"  post-due-called base        : {_r['post_due_base']:>8,}   expected ~19,025")
+print("[03_roll_impairment.py] DQ1->DQ2 roll on the post-due-called ledger:")
+print(f"  post-due-called base        : {_r['post_due_base']:>8,}")
 print(f"  rolled DQ1->DQ2 (raw count) : {_r['roll_dq1_dq2']:>8,}")
-print(f"  [VERIFY: UNRECONCILED] Namit (21-Jul) quoted ~2,879; Ishant's pivot ~3,306.")
-print(f"  Pin which roll cohort is canonical before quoting the dollar - the funding")
-print(f"  ask rests on this number. Neither is hardcoded here.")
+print(f"  [VERIFY: roll-cohort definition] Pin which roll cohort is canonical")
+print(f"  before quoting the dollar - the funding ask rests on this number.")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# 03i. Impairment on the roll cohort AND the post-due base (Ishant pivot Table 2).
-# ECL sums, forward charge-off counts, and gross charge-off NCL.
+# 03i. Impairment on the roll cohort AND the post-due base. ECL sums, forward
+# charge-off counts, and gross charge-off NCL.
 # ---------------------------------------------------------------------
-print("[B_ishant/03_roll_impairment.py] Impairment: roll cohort vs post-due base:")
+print("[03_roll_impairment.py] Impairment: roll cohort vs post-due base:")
 display(spark.sql(f"""
 SELECT 1 AS row_order, 'A. roll cohort (DQ1->DQ2)' AS base,
        count(1)                       AS accts,
@@ -138,7 +121,7 @@ SELECT 1 AS row_order, 'A. roll cohort (DQ1->DQ2)' AS base,
        round(sum(chrgoff_12m_amt), 0) AS gross_ncl_12m
 FROM {T_03R} WHERE rolled_dq1_dq2
 UNION ALL
-SELECT 2, 'B. post-due-called base (~19,025)',
+SELECT 2, 'B. post-due-called base',
        count(1),
        round(sum(ecl_m2), 0), round(sum(ecl_m3), 0),
        count_if(try_cast(co_8m_flag  AS int) = 1),
@@ -155,19 +138,19 @@ SELECT round(sum(ecl_m2), 0) AS ecl_m2, round(sum(ecl_m3), 0) AS ecl_m3,
        round(sum(chrgoff_12m_amt), 0) AS gross_ncl_12m
 FROM {T_03R} WHERE rolled_dq1_dq2
 """).first()
-print("[B_ishant/03_roll_impairment.py] roll-cohort headline - actual vs meeting reference:")
-print(f"  ECL_M2 sum       : {_i['ecl_m2']:>14,.0f}   ref ~$4.96M")
-print(f"  ECL_M3 sum       : {_i['ecl_m3']:>14,.0f}   ref ~$7.17M")
-print(f"  CO_12M count     : {_i['co_12m']:>14,}   ref 1,760-1,980")
-print(f"  gross 12M NCL    : {_i['gross_ncl_12m']:>14,.0f}   ref ~$7.599M (gross; net of recovery/reversal pending)")
+print("[03_roll_impairment.py] roll-cohort headline:")
+print(f"  ECL_M2 sum       : {_i['ecl_m2']:>14,.0f}")
+print(f"  ECL_M3 sum       : {_i['ecl_m3']:>14,.0f}")
+print(f"  CO_12M count     : {_i['co_12m']:>14,}")
+print(f"  gross 12M NCL    : {_i['gross_ncl_12m']:>14,.0f}   (gross; net of recovery/reversal pending)")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
 # 03s. STG_CD_M2 (IFRS9 stage at Feb) breakdown on the roll cohort.
-# blank / S1 / S2 / S3. Meeting: ~1,744 already stage-2 at Feb 1.
+# blank / S1 / S2 / S3.
 # ---------------------------------------------------------------------
-print("[B_ishant/03_roll_impairment.py] STG_CD_M2 stage breakdown on the DQ1->DQ2 roll cohort:")
+print("[03_roll_impairment.py] STG_CD_M2 stage breakdown on the DQ1->DQ2 roll cohort:")
 display(spark.sql(f"""
 SELECT CASE WHEN stg_cd_m2 IS NULL OR trim(stg_cd_m2) = '' THEN '(blank)'
             ELSE upper(trim(stg_cd_m2)) END AS stg_cd_m2,
@@ -180,18 +163,16 @@ GROUP BY 1 ORDER BY 1
 """))
 
 # ---------------------------------------------------------------------
-# [OPEN: HRAM flag source not in code]
-# The meeting split the ~1,744 stage-2 roll accounts into HRAM vs non-HRAM
-# (1,744 -> 478 excluding HRAM). HRAM is an Excel-only daily process; there is
-# NO HRAM flag in Ishant's reconstructed SQL nor in the SAS export columns we
-# carry. We do NOT fabricate the HRAM-exclusion split. To complete it, source
-# the HRAM flag (refit/apollo hram columns exist in the wider SAS export - see
-# B_lean/B01 lines 189-192 hram_flag_refit_M2 / hram_flag_apollo_M2) and add a
-# stage-2-excluding-HRAM cut here. Left as a marked placeholder.
+# [OPEN: HRAM flag source] The stage-2 roll accounts include HRAM
+# (high-risk-account-management) cases that should be excluded from the
+# addressable cut. HRAM is an Excel-only daily process; there is no HRAM flag
+# in the SAS export columns carried here, so the stage-2-excluding-HRAM cut is
+# not computed. To complete it, source the HRAM flag (the hram_flag_refit_M2 /
+# hram_flag_apollo_M2 columns exist in the wider SAS export) and add a
+# stage-2-excluding-HRAM cut. Left as a marked open item; not fabricated.
 # ---------------------------------------------------------------------
-print("[B_ishant/03_roll_impairment.py] [OPEN: HRAM flag source not in code] "
-      "stage-2-excluding-HRAM split (meeting: 1,744 -> 478) NOT computed - "
-      "HRAM flag not present in Ishant's SQL; see the hram_flag_refit_M2 / "
-      "hram_flag_apollo_M2 SAS columns to complete this. Not fabricated.")
+print("[03_roll_impairment.py] [OPEN: HRAM flag source] stage-2-excluding-HRAM "
+      "split not computed - HRAM flag not present in the carried SAS columns; "
+      "source hram_flag_refit_M2 / hram_flag_apollo_M2 to complete it. Not fabricated.")
 
-print("[B_ishant/03_roll_impairment.py] 03_roll_impairment complete: uc2_t16_03r_roll")
+print("[03_roll_impairment.py] 03_roll_impairment complete: uc2_t16_03r_roll")

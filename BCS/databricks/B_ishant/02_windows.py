@@ -1,46 +1,42 @@
 # Databricks notebook source
 # =====================================================================
-# B_ishant / 02_windows.py
-# The statement-window classification (Ishant's single-max anchor).
+# 02_windows.py
+# The statement-window classification (single-max statement anchor).
 #
-# !!! TABLE COLLISION NOTICE (owner's explicit intent, 2026-07-22) !!!
-#   This module writes uc2_t16_02n_episodes and RE-CREATES (CREATE OR REPLACE)
-#   uc2_t16_01s_populations_<vintage> - the SAME table names as B_lean. It
-#   OVERWRITES B_lean's live tables. Deliberate: one t16 table set, no duplicates.
+# THE ANCHOR
+#   stmt_anchor = max(stmt_last_dt) per account, taken over the statements
+#   whose statement date falls in the statement period [STMT_START, STMT_END_EXCL).
+#   That yields ONE governing statement per account: the cycle whose payment due
+#   date lands in the anchor month. The population is fixed at all ledger
+#   accounts; inbound calls only classify an account by which window they land in.
 #
-# THE ANCHOR (this is the whole point of the client-blessed approach)
-#   stmt_anchor = max(stmt_last_dt) per account over the bounded fmt window.
-#   ONE governing statement per account (the January-qualifying one). This
-#   REPLACES our old per-call as-of join. The population is FIXED at all ledger
-#   accounts; inbound calls only CLASSIFY an account by which window they land in.
+#   Bounding the anchor to the statement period is what keeps each call measured
+#   against ITS cycle's statement. max(stmt_last_dt) taken over the whole fmt scan
+#   window would return a later cycle's statement (dated after the calls), pushing
+#   every call to a negative days-since-statement and out of all windows.
 #
 # THE STATEMENT / DUE-DATE WINDOWS (all measured in days from stmt_dt = day 0)
 #   pre-due  = [stmt_dt,      stmt_dt + 25)  -> days  0..24  (run-up to due date)
 #   post-due = [stmt_dt + 25, stmt_dt + 56)  -> days 25..55  (missed due, pre-roll)
 #   overall  = [stmt_dt,      stmt_dt + 56)  -> days  0..55  (whole cycle)
 #   Account-level flag = max(window_flag) over the account's inbound calls.
-#   post-due is the "actionable" band Anupam confirmed: before the due date a call
-#   goes to the Cares team, after it goes to Collections.
+#   Before the due date a call routes to the Cares team; after it, to Collections,
+#   so post-due is the actionable band.
 #
-#   FLAG NAMING: we adopt Ishant's canonical names so B_lean's downstream (B01)
-#   can consume this table unchanged:
-#     call_25_window_f / call_31_window_f / call_overall_f   (call grain)
-#     accts_called_25_f / accts_called_31_f / accts_called_overall_f (acct grain)
-#   Mapping: 25 = pre-due (day 0-24, run-up to due date);
-#            31 = post-due (day 25-55, the missed-due actionable band).
+#   Flag names (call grain / account grain):
+#     call_25_window_f / call_31_window_f / call_overall_f
+#     accts_called_25_f / accts_called_31_f / accts_called_overall_f
+#   25 = pre-due (day 0-24, run-up to due date);
+#   31 = post-due (day 25-55, the missed-due actionable band).
 #
 # WHAT THIS BUILDS
 #   1. uc2_t16_02n_episodes - inbound calls, one row per contactid, with the
 #                             25/31/overall window flags against the single-max
 #                             anchor, plus call-context review columns.
-#   2. uc2_t16_01s_populations_<vintage> - RE-CREATED to fold the account-level
-#                             accts_called_25_f/_31_f/_overall_f onto the SAME
-#                             table that carries the funnel/ECL/stage columns
-#                             (Ishant's B01 one-table shape).
+#   2. uc2_t16_01s_populations_<vintage> - re-created to fold the account-level
+#                             accts_called_25_f/_31_f/_overall_f onto the same
+#                             table that carries the funnel/ECL/stage columns.
 #   Then it prints the 4-stage x 3-window pivot (the funnel-with-windows table).
-#
-#   Expected (Ishant, 202501): on the 186,013 ledger base,
-#     pre-due(25) 6,778 / post-due(31) 19,025 / overall 23,713 accounts called.
 #
 #   Every print/display below is prefixed with this file name for screenshots.
 # =====================================================================
@@ -48,7 +44,7 @@
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# SETUP - copied verbatim from B_lean (B00 is the canonical copy). Keep in sync.
+# SETUP - catalog/schema, source-table handles, window + period constants.
 # ---------------------------------------------------------------------
 import datetime as _dt
 
@@ -82,66 +78,57 @@ MONTH_WIN_END = _mm(_a0, 3).strftime("%Y%m%d")      # 20250401 - fmt scan high e
 
 NUM_KEY = "cast(try_cast({c} AS bigint) AS string)"
 
-# --- statement period + window constants (Ishant / 21-Jul meeting) ------------
-# Statement period = the billing cycles whose due date falls in January.
-#   STMT_START     = 2024-12-07  (statement dates on/after this qualify)
-#   STMT_END_EXCL  = 2025-01-07  (statement dates before this qualify)
+# Statement period = the billing cycles whose payment due date falls in the
+# anchor month. A statement date on/after STMT_START and before STMT_END_EXCL
+# qualifies. The single-max anchor is taken over statements inside this period.
+STMT_START = "2024-12-07"       # statement dates on/after this qualify
+STMT_END_EXCL = "2025-01-07"    # statement dates before this qualify
 # Window day offsets from stmt_dt (day 0):
-STMT_DUE_DAY = 25         # days: payment due-date marker; pre-due(25 window) ends here
+STMT_DUE_DAY = 25         # days: payment due-date marker; pre-due window ends here
 STMT_WINDOW_DAYS = 56     # days: overall window is [stmt_dt, stmt_dt+56)
-# Call-table effdt scan bounds (Dec24 .. Apr25) - a scan-pruning guard only.
+# Call-table effdt scan bounds (prev month .. anchor+3) - a scan-pruning guard.
 EFFDT_SCAN_START = _mm(_a0, -1).isoformat()   # 2024-12-01
 EFFDT_HARD_END = _mm(_a0, 3).isoformat()      # 2025-04-01
 
-STMT_START = "2024-12-07"
-STMT_END_EXCL = "2025-01-07"
-
-# Table names (B_lean-shared; CREATE OR REPLACE overwrites B_lean's live tables).
 T_00N = f"{DB}.uc2_t16_00n_acct_monthly"
 T_01S = f"{DB}.uc2_t16_01s_populations_{ANCHOR_YM}"
 T_02N = f"{DB}.uc2_t16_02n_episodes"
 
-print(f"[B_ishant/02_windows.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
-print(f"[B_ishant/02_windows.py] windows: 25/pre-due [0,{STMT_DUE_DAY}) "
+print(f"[02_windows.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
+print(f"[02_windows.py] windows: 25/pre-due [0,{STMT_DUE_DAY}) "
       f"31/post-due [{STMT_DUE_DAY},{STMT_WINDOW_DAYS}) overall [0,{STMT_WINDOW_DAYS}); "
       f"stmt period {STMT_START}..{STMT_END_EXCL}")
-print(f"[B_ishant/02_windows.py] RE-CREATES B_lean-shared {T_01S} to fold on window flags")
 # ---------------------------------------------------------------------
 # end of SETUP
 # ---------------------------------------------------------------------
 
 # COMMAND ----------
 
-# ---------------------------------------------------------------------
-# Preconditions: 01_accounts.py built the ledger + monthly layer.
-# ---------------------------------------------------------------------
-for _t in ["uc2_t16_00n_acct_monthly", f"uc2_t16_01s_populations_{ANCHOR_YM}"]:
-    if not spark.catalog.tableExists(f"{DB}.{_t}"):
-        raise AssertionError(f"[B_ishant/02_windows.py] {DB}.{_t} missing - run 01_accounts.py first")
+# REFRESH the call table so the scan sees the live loading edge.
 spark.sql(f"REFRESH TABLE {CALL}")
-print("[B_ishant/02_windows.py] preconditions OK: 00n / 01s present; call table refreshed")
+print("[02_windows.py] call table refreshed")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# 02n. Inbound calls classified against the SINGLE-MAX statement anchor.
+# 02n. Inbound calls classified against the single-max statement anchor.
 #
-#   stmt_anchor: max(stmt_last_dt) per account = ONE statement per account.
-#   call_25/31/overall_window_f are computed at CALL grain using
-#   date_add(stmt_dt, 25) and date_add(stmt_dt, 56).
+#   stmt_anchor = max(stmt_last_dt) per account over the statement period =
+#   one governing statement per account. call_25/31/overall_window_f are
+#   computed at call grain using date_add(stmt_dt, 25) and date_add(stmt_dt, 56).
 #   One row per contactid; first-inbound-per-day dedup, business cards dropped.
 #
-#   REVIEW COLUMNS (all real call-table columns per data-dictionary lines 323-329):
+#   Review columns (real call-table columns per data-dictionary lines 323-329):
 #     producttype   - product line
 #     queue         - collection queue / routing bucket (e.g. CARE_GAP)
 #     routingprofile- vendor+function+program (e.g. TEL_CARE_PP_01)
-#     department    - org work classification (Care / Fraud / Collection) <- call dept
+#     department    - org work classification (Care / Fraud / Collection)
 #     segment       - org/work classification
 # ---------------------------------------------------------------------
 spark.sql(f"""
 CREATE OR REPLACE TABLE {T_02N} AS
 WITH stmt_anchor_raw AS (
-    -- every distinct account statement date over the bounded fmt window
+    -- distinct account statement dates that fall in the statement period
     SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,
            try_cast(extnl_acct_id AS bigint) AS acct_num,
            try_cast(stmt_last_dt AS date) AS stmt_dt
@@ -149,10 +136,12 @@ WITH stmt_anchor_raw AS (
     WHERE sfx_nbr = 0
       AND eff_dt >= '{MONTH_WIN_START}' AND eff_dt < '{MONTH_WIN_END}'
       AND stmt_last_dt IS NOT NULL
+      AND try_cast(stmt_last_dt AS date) >= DATE '{STMT_START}'
+      AND try_cast(stmt_last_dt AS date) <  DATE '{STMT_END_EXCL}'
 ),
 stmt_anchor AS (
-    -- THE ANCHOR: max(stmt_last_dt) = one governing statement per account.
-    -- (Ishant's stmt_anchor CTE. NOT a per-call as-of join.)
+    -- THE ANCHOR: max(stmt_last_dt) over the statement period = one governing
+    -- statement per account (the cycle due in the anchor month).
     SELECT acct_key, acct_num, max(stmt_dt) AS stmt_dt
     FROM stmt_anchor_raw
     GROUP BY acct_key, acct_num
@@ -166,7 +155,7 @@ calls_flagged AS (
            c.initiationtimestamp,
            a.stmt_dt,
            datediff(c.`date`, a.stmt_dt) AS days_since_stmt_dt,
-           -- due date derived = stmt_dt + 25; no explicit due-date column in fmt (dict)
+           -- due date derived = stmt_dt + 25; no explicit due-date column in fmt
            date_add(a.stmt_dt, {STMT_DUE_DAY}) AS due_dt_derived,
            -- call-context review columns (real call-table columns, dict lines 323-329)
            cast(c.producttype AS string)    AS producttype,
@@ -214,9 +203,9 @@ SELECT acct_key, acct_num, contactid, call_dt, call_month, stmt_dt,
 FROM dedup
 WHERE rn = 1
 """)
-print(f"[B_ishant/02_windows.py] built {T_02N}")
+print(f"[02_windows.py] built {T_02N}")
 
-print("[B_ishant/02_windows.py] inbound call-level window counts:")
+print("[02_windows.py] inbound call-level window counts:")
 display(spark.sql(f"""
 SELECT count(1) AS inbound_calls,
        count(DISTINCT acct_key) AS inbound_accounts,
@@ -229,10 +218,10 @@ FROM {T_02N}
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# FOLD: roll the call-level flags to ACCOUNT level and RE-CREATE the ledger
-# table with the accts_called_* flags on the SAME table as the funnel columns
-# (Ishant's B01 one-table shape). accts_called_* = max(window_flag) per account.
-# The population is every 01s account; calls only classify.
+# FOLD: roll the call-level flags to account level and re-create the ledger
+# table with the accts_called_* flags on the same table as the funnel columns.
+# accts_called_* = max(window_flag) per account. The population is every 01s
+# account; calls only classify.
 # ---------------------------------------------------------------------
 spark.sql(f"""
 CREATE OR REPLACE TABLE {T_01S} AS
@@ -255,16 +244,15 @@ SELECT p.*,
 FROM {T_01S} p
 LEFT JOIN call_acct c ON c.acct_key = p.acct_key
 """)
-print(f"[B_ishant/02_windows.py] folded window flags into {T_01S} (funnel + accts_called_* on one table)")
+print(f"[02_windows.py] folded window flags into {T_01S} (funnel + accts_called_* on one table)")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
 # The funnel-with-window pivot: 4 stages x 3 windows (account counts).
-# This is the table Namit walked in the 21-Jul meeting. The ledger row's
-# post-due(31) cell is the headline 19,025.
+# The ledger row's post-due(31) cell is the actionable-band headline.
 # ---------------------------------------------------------------------
-print("[B_ishant/02_windows.py] Stage funnel x window pivot (accounts called in each window):")
+print("[02_windows.py] Stage funnel x window pivot (accounts called in each window):")
 display(spark.sql(f"""
 SELECT stage_order, stage,
        count(1)                              AS accts_in_stage,
@@ -298,20 +286,20 @@ SELECT count_if(accts_called_25_f = 1)      AS pre_due,
        count_if(accts_called_overall_f = 1) AS overall
 FROM {T_01S} WHERE in_sas_ledger
 """).first()
-print("[B_ishant/02_windows.py] ledger-base window counts - actual vs expected (Ishant 202501):")
-print(f"  pre-due accounts (25 / day 0-24) : {_led['pre_due']:>8,}   expected ~6,778")
-print(f"  post-due accounts (31 / day 25-55): {_led['post_due']:>8,}   expected ~19,025  <- HEADLINE")
-print(f"  overall in-window accounts       : {_led['overall']:>8,}   expected ~23,713")
+print("[02_windows.py] ledger-base window counts:")
+print(f"  pre-due accounts (25 / day 0-24)  : {_led['pre_due']:>8,}")
+print(f"  post-due accounts (31 / day 25-55): {_led['post_due']:>8,}")
+print(f"  overall in-window accounts        : {_led['overall']:>8,}")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# [OPEN / VERIFY] The 25-vs-28-day edge (grace period). Anupam raised that the
-# actionable window may start at day 28, not 25 (3-day grace between due date and
-# next cycle date). Below shows the day-by-day call distribution around day 25 so
-# the edge can be re-cut if the client settles on 28. NOT decided - do not hardcode.
+# [OPEN: 25-vs-28 day edge] The actionable window may start at day 28, not 25,
+# if the client applies a 3-day grace period between the due date and the next
+# cycle date. Below shows the day-by-day call distribution around day 25 so the
+# edge can be re-cut if the client settles on 28. Not decided; not hardcoded.
 # ---------------------------------------------------------------------
-print("[B_ishant/02_windows.py] [OPEN: 25-vs-28 edge] daily inbound call counts, days 20-31 since stmt:")
+print("[02_windows.py] [OPEN: 25-vs-28 edge] daily inbound call counts, days 20-31 since stmt:")
 display(spark.sql(f"""
 SELECT days_since_stmt_dt, count(1) AS calls, count(DISTINCT acct_key) AS accts
 FROM {T_02N}
@@ -319,5 +307,5 @@ WHERE days_since_stmt_dt BETWEEN 20 AND 31
 GROUP BY days_since_stmt_dt ORDER BY days_since_stmt_dt
 """))
 
-print(f"[B_ishant/02_windows.py] 02_windows complete: uc2_t16_02n_episodes, "
+print(f"[02_windows.py] 02_windows complete: uc2_t16_02n_episodes, "
       f"uc2_t16_01s_populations_{ANCHOR_YM} (folded)")

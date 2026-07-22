@@ -1,27 +1,25 @@
 # Databricks notebook source
 # =====================================================================
-# B_ishant / 04_transcript_frame.py
+# 04_transcript_frame.py
 # The transcript-eligible sampling frame (feeds the Copilot discovery work).
 #
-# TABLE NOTE (owner's intent, 2026-07-22): reads the folded B_lean-shared ledger
-#   uc2_t16_01s_populations_<vintage>, the episode table uc2_t16_02n_episodes, and
-#   the roll cut uc2_t16_03r_roll_<vintage>; writes uc2_t16_04t_frame_<vintage>
-#   (the transcript-review frame; no B_lean equivalent, t16-style name).
-#   CREATE OR REPLACE, so re-runs overwrite.
+#   Reads the folded ledger uc2_t16_01s_populations_<vintage>, the episode table
+#   uc2_t16_02n_episodes, and the roll cut uc2_t16_03r_roll_<vintage>; writes
+#   uc2_t16_04t_frame_<vintage>.
 #
 # WHAT THIS BUILDS
 #   uc2_t16_04t_frame_<vintage> - one row per in-window inbound call that has a
 #   transcript, tagged with its window bucket (post-due / roll-cohort), the account
 #   key, the SAS captured_sas outcome, the days-since-statement position, AND the
-#   full review-context column set (below). This is the frame Namit described: run
-#   the transcript AI over the ~2,879 roll customers' inbound calls to find
-#   solvable intent, with enough per-account/per-call context to read against.
+#   full review-context column set (below). The transcript AI runs over the roll
+#   customers' inbound calls to find solvable intent, with enough per-account /
+#   per-call context to read against.
 #
-# REVIEW-CONTEXT COLUMNS ON THE FRAME (all real source columns or derived):
+# REVIEW-CONTEXT COLUMNS ON THE FRAME (real source columns or derived):
 #   Call grain (from uc2_t16_02n_episodes; real call-table columns per dict):
 #     contactid, acct_key, call_dt, producttype, queue, routingprofile,
 #     department (the call routing dept), segment, stmt_dt, due_dt_derived
-#     (= stmt_dt + 25; no explicit due-date column in fmt, dict), days_since_stmt_dt
+#     (= stmt_dt + 25; no explicit due-date column in fmt), days_since_stmt_dt
 #   Account grain (from the folded ledger; real fmt / SAS columns):
 #     cpc_class, min_due_amt (fmt PAYMT_MIN_DUE_AMT), eop_bal_m1, cr_lmt_m1,
 #     utilization_m1, last_pay_vs_min_due, paymt_amt_m1/m2, paymt_last_amt, pay_dt,
@@ -38,9 +36,10 @@
 # DIRECTION / ACCTID HANDLING
 #   INBOUND calls carry acctid (that is why 02n only keeps INBOUND). OUTBOUND
 #   calls have acctid missing in this source, so they cannot be account-joined and
-#   are out of scope for this frame. [VERIFY: transfer / callback contactids may
-#   carry a different or missing acctid; not resolved here - noted, not dropped
-#   silently.]
+#   are out of scope for this frame. [VERIFY: transfer/callback acctid] transfer
+#   and callback inbound contactids may carry a different or missing acctid;
+#   whether they should be re-keyed is not resolved here - noted, not dropped
+#   silently.
 #
 #   The frame emits NO transcript text - only contactid + join keys + flags +
 #   numeric context, so a screenshot of the sizing is safe. Transcript text pull
@@ -52,7 +51,7 @@
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
-# SETUP - copied verbatim from B_lean (B00 is the canonical copy). Keep in sync.
+# SETUP - catalog/schema, transcript handle, table handles, scan bounds.
 # ---------------------------------------------------------------------
 import datetime as _dt
 
@@ -77,33 +76,19 @@ TX = f"`{CC_CATALOG}`.contactcenter_bdp_db.transcript"
 _a0 = _dt.date(int(ANCHOR_YM[:4]), int(ANCHOR_YM[4:6]), 1)
 _mm = lambda d, k: _dt.date(d.year + (d.month - 1 + k) // 12, (d.month - 1 + k) % 12 + 1, 1)
 
-# transcript effdt scan bounds (Dec24 .. Apr25) - scan-pruning guard only
+# transcript effdt scan bounds (prev month .. anchor+3) - scan-pruning guard only
 EFFDT_SCAN_START = _mm(_a0, -1).isoformat()   # 2024-12-01
 EFFDT_SCAN_END = _mm(_a0, 3).isoformat()      # 2025-04-01
 
-# Table names (B_lean-shared reads; t16-style frame table written).
 T_01S = f"{DB}.uc2_t16_01s_populations_{ANCHOR_YM}"
 T_02N = f"{DB}.uc2_t16_02n_episodes"
 T_03R = f"{DB}.uc2_t16_03r_roll_{ANCHOR_YM}"
 T_04T = f"{DB}.uc2_t16_04t_frame_{ANCHOR_YM}"
 
-print(f"[B_ishant/04_transcript_frame.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
+print(f"[04_transcript_frame.py] SETUP OK: vintage {ANCHOR_YM}; layers -> {DB}")
 # ---------------------------------------------------------------------
 # end of SETUP
 # ---------------------------------------------------------------------
-
-# COMMAND ----------
-
-# ---------------------------------------------------------------------
-# Preconditions: the call classification + the roll cohort exist; transcript reachable.
-# ---------------------------------------------------------------------
-for _t in [f"uc2_t16_02n_episodes", f"uc2_t16_01s_populations_{ANCHOR_YM}",
-           f"uc2_t16_03r_roll_{ANCHOR_YM}"]:
-    if not spark.catalog.tableExists(f"{DB}.{_t}"):
-        raise AssertionError(f"[B_ishant/04_transcript_frame.py] {DB}.{_t} missing - run 01/02/03 first")
-if not spark.catalog.tableExists(f"{CC_CATALOG}.contactcenter_bdp_db.transcript"):
-    raise AssertionError(f"[B_ishant/04_transcript_frame.py] transcript table not reachable: {TX}")
-print("[B_ishant/04_transcript_frame.py] preconditions OK: 02n / 01s / 03r present; transcript reachable")
 
 # COMMAND ----------
 
@@ -199,14 +184,14 @@ SELECT e.contactid,
 FROM eligible_calls e
 LEFT JOIN tx_ids x ON x.contactid = e.contactid
 """)
-print(f"[B_ishant/04_transcript_frame.py] built {T_04T}")
+print(f"[04_transcript_frame.py] built {T_04T}")
 
 # COMMAND ----------
 
 # ---------------------------------------------------------------------
 # Frame coverage: eligible calls / accounts and how many have a transcript.
 # ---------------------------------------------------------------------
-print("[B_ishant/04_transcript_frame.py] transcript-frame coverage:")
+print("[04_transcript_frame.py] transcript-frame coverage:")
 display(spark.sql(f"""
 SELECT count(1)                          AS eligible_calls,
        count(DISTINCT acct_key)          AS eligible_accounts,
@@ -217,7 +202,7 @@ SELECT count(1)                          AS eligible_calls,
 FROM {T_04T}
 """))
 
-print("[B_ishant/04_transcript_frame.py] eligible calls by window bucket (with-transcript split):")
+print("[04_transcript_frame.py] eligible calls by window bucket (with-transcript split):")
 display(spark.sql(f"""
 SELECT window_bucket,
        count(1)                 AS calls,
@@ -236,7 +221,7 @@ GROUP BY window_bucket ORDER BY window_bucket
 # due date, balance/limit/utilization, min-due, payment signals, stage, bucket.
 # NO transcript text emitted here (screenshot-safe sizing view).
 # ---------------------------------------------------------------------
-print("[B_ishant/04_transcript_frame.py] Copilot review frame (roll-cohort, transcript present) - top 200:")
+print("[04_transcript_frame.py] Copilot review frame (roll-cohort, transcript present) - top 200:")
 display(spark.sql(f"""
 SELECT contactid, acct_key, window_bucket, captured_sas,
        call_dt, days_since_stmt_dt, stmt_dt, due_dt_derived,
@@ -250,8 +235,8 @@ ORDER BY days_since_stmt_dt, acct_key
 LIMIT 200
 """))
 
-print("[B_ishant/04_transcript_frame.py] [VERIFY: transfer/callback acctid] outbound calls "
-      "carry no acctid in this source and are excluded; transfer/callback inbound contactids "
-      "may carry a different/missing acctid - not separately resolved here.")
+print("[04_transcript_frame.py] [VERIFY: transfer/callback acctid] outbound calls "
+      "carry no acctid in this source and are excluded; transfer/callback inbound "
+      "contactids may carry a different/missing acctid - not separately resolved here.")
 
-print(f"[B_ishant/04_transcript_frame.py] 04_transcript_frame complete: uc2_t16_04t_frame_{ANCHOR_YM}")
+print(f"[04_transcript_frame.py] 04_transcript_frame complete: uc2_t16_04t_frame_{ANCHOR_YM}")
