@@ -299,7 +299,9 @@ FROM {T_04T}
 print("[04_transcript_frame.py] Copilot review frame (roll-cohort, transcript present) - top 200:")
 display(spark.sql(f"""
 SELECT contactid, acct_key, window_bucket, captured_sas,
-       call_dt, days_since_stmt_dt, stmt_dt, due_dt_derived,
+       -- past_due_last_dt = the real observed past-due date (fmt), shown as the
+       -- due date; due_dt_derived (= stmt_dt + 25) kept alongside as the cycle marker
+       call_dt, days_since_stmt_dt, stmt_dt, past_due_last_dt, due_dt_derived,
        tx_effdt, tx_turns,
        department, queue, routingprofile, segment, cpc_class,
        dlnqt_cd_m1, dlnqt_cd_m2, stg_cd_m1, max_bucket,
