@@ -109,7 +109,10 @@ WITH snap AS (
            coalesce(try_cast(atmtc_paymt_last_dt AS date),
                     try_to_date(cast(atmtc_paymt_last_dt AS string), 'ddMMMyyyy')) AS auto_dt,
            coalesce(try_cast(nsf_last_paymt_dt AS date),
-                    try_to_date(cast(nsf_last_paymt_dt AS string), 'ddMMMyyyy')) AS nsf_dt
+                    try_to_date(cast(nsf_last_paymt_dt AS string), 'ddMMMyyyy')) AS nsf_dt,
+           -- [VERIFY: fmt column casing] date the account last went past due
+           coalesce(try_cast(past_due_last_dt AS date),
+                    try_to_date(cast(past_due_last_dt AS string), 'ddMMMyyyy')) AS past_due_last_dt
     FROM {FMT}
     WHERE sfx_nbr = 0
       AND eff_dt >= '{MONTH_WIN_START}' AND eff_dt < '{MONTH_WIN_END}'
@@ -129,7 +132,8 @@ SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,
        max_by(paymt_last_amt, eff_dt) AS paymt_last_amt,     -- eom last payment amount (fmt PAYMT_LAST_AMT)
        max(pay_dt) AS pay_dt,
        max(auto_dt) AS auto_dt,
-       max(nsf_dt) AS nsf_dt
+       max(nsf_dt) AS nsf_dt,
+       max(past_due_last_dt) AS past_due_last_dt      -- date account last went past due (fmt)
 FROM snap
 GROUP BY 1, 2
 """)
@@ -192,7 +196,7 @@ f AS (
 mon AS (
     SELECT acct_key, eom_cpc, max_bucket, eom_bucket, eom_bal,
            eom_cr_lmt_origl_amt, min_due_amt, paymt_last_amt,
-           pay_dt, auto_dt, nsf_dt
+           pay_dt, auto_dt, nsf_dt, past_due_last_dt
     FROM {T_00N}
     WHERE ym = '{ANCHOR_YM}'
 ),
@@ -252,10 +256,10 @@ SELECT cast(f.acct_num AS string) AS acct_key,
        f.hram_flag_refit_M2 AS hram_flag_refit_m2,
        f.hram_flag_refit_M3 AS hram_flag_refit_m3,
        -- past-due date, carried two ways (both kept):
-       --   past_due_last_dt = the real observed past-due date (fmt/CSV PAST_DUE_LAST_DT)
+       --   past_due_last_dt = the observed date the account last went past due,
+       --     from the FMT monthly layer (00n), not the SAS csv
        --   due_dt_derived   = the cycle marker (stmt_dt + 25), built in 02_windows.py
-       coalesce(try_cast(f.PAST_DUE_LAST_DT AS date),
-                try_to_date(cast(f.PAST_DUE_LAST_DT AS string), 'ddMMMyyyy')) AS past_due_last_dt,
+       mon.past_due_last_dt AS past_due_last_dt,
        -- ============ REVIEW COLUMNS (account grain) ============
        -- cpc_class = the CPC / department class, from the FMT product code
        -- eom_cpc (clnt_prdct_cd), NOT the SAS CPC_FLAG_NW.
