@@ -33,7 +33,7 @@ import datetime as _dt
 CATALOG = "cda_model_shared"
 SCHEMA = "ecm_cld_model"
 ANCHOR_YM = "202501"
-SAS_CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WATERFALL_COLL_CALL_V2_202501.csv"
+SAS_CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WATERFALL_COLL_CALL_V3_202501.csv"
 FMT_CATALOG = "634153504162_glue_connection_catalog"
 CC_CATALOG = "062108867742_glue_connectivity_catalog"
 
@@ -110,7 +110,7 @@ WITH snap AS (
                     try_to_date(cast(atmtc_paymt_last_dt AS string), 'ddMMMyyyy')) AS auto_dt,
            coalesce(try_cast(nsf_last_paymt_dt AS date),
                     try_to_date(cast(nsf_last_paymt_dt AS string), 'ddMMMyyyy')) AS nsf_dt,
-           -- [VERIFY: fmt column casing] date the account last went past due
+           -- date the account last went past due (fmt_acct_c.past_due_last_dt)
            coalesce(try_cast(past_due_last_dt AS date),
                     try_to_date(cast(past_due_last_dt AS string), 'ddMMMyyyy')) AS past_due_last_dt
     FROM {FMT}
@@ -212,8 +212,9 @@ SELECT cast(f.acct_num AS string) AS acct_key,
        f.acct_num,
        f.wf_dq1, f.wf_cpc, f.wf_non_co,
        (f.wf_dq1 AND f.wf_cpc AND f.wf_non_co) AS in_sas_ledger,
-       -- delinquency codes: M1 = Jan measurement, M2 = Feb, M3 = Mar. The
-       -- DQ1->DQ2 roll = dlnqt_cd_m1 = 1 AND dlnqt_cd_m2 = 2 (in 03_roll_impairment).
+       -- delinquency codes: M0 = Dec measurement, M1 = Jan, M2 = Feb, M3 = Mar.
+       -- The DQ1->DQ2 roll = dlnqt_cd_m1 = 1 AND dlnqt_cd_m2 = 2 (in 03_roll_impairment).
+       f.DLNQT_CD_M0 AS dlnqt_cd_m0,
        f.DLNQT_CD_M1 AS dlnqt_cd_m1, f.DLNQT_CD_M2 AS dlnqt_cd_m2, f.DLNQT_CD_M3 AS dlnqt_cd_m3,
        f.DLNQT_BKT_M1 AS dlnqt_bkt_m1, f.DLNQT_BKT_M2 AS dlnqt_bkt_m2, f.DLNQT_BKT_M3 AS dlnqt_bkt_m3,
        try_cast(f.PAYMT_AMT_M1 AS double) AS paymt_amt_m1,

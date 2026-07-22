@@ -51,7 +51,7 @@ import datetime as _dt
 CATALOG = "cda_model_shared"
 SCHEMA = "ecm_cld_model"
 ANCHOR_YM = "202501"
-SAS_CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WATERFALL_COLL_CALL_V2_202501.csv"
+SAS_CSV_PATH = "/Volumes/cda_model_shared/ecm_cld_model/ecm_cld/collections_zenon/WATERFALL_COLL_CALL_V3_202501.csv"
 FMT_CATALOG = "634153504162_glue_connection_catalog"
 CC_CATALOG = "062108867742_glue_connectivity_catalog"
 
