@@ -78,5 +78,5 @@ print("[RUN_ALL.py] Config:",
 # COMMAND ----------
 
 print("[RUN_ALL.py] RUN_ALL complete. Screenshot the filename-prefixed count "
-      "blocks from each step. Open items: roll-cohort definition, HRAM-exclusion "
-      "split, 25-vs-28 day edge, transfer/callback acctid.")
+      "blocks from each step. Open items: roll-cohort definition, 25-vs-28 day "
+      "edge, transfer/callback acctid.")

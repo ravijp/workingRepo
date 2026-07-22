@@ -23,7 +23,10 @@
 #   Account grain (from the folded ledger; real fmt / SAS columns):
 #     cpc_class, min_due_amt (fmt PAYMT_MIN_DUE_AMT), eop_bal_m1, cr_lmt_m1,
 #     utilization_m1, last_pay_vs_min_due, paymt_amt_m1/m2, paymt_last_amt, pay_dt,
-#     dlnqt_cd_m1/m2, stg_cd_m1, max_bucket, eom_bucket, captured_sas
+#     dlnqt_cd_m1/m2, stg_cd_m1, max_bucket, eom_bucket, captured_sas,
+#     dlnqt_bkt_m0 (Dec 2024 bucket, derived from 00n), new_roll_flag (CSV),
+#     past_due_last_dt (real fmt/CSV past-due date), and the post-due(31) counts
+#     inbound_call_stmnt_dt_25_plus_31_calls/_episodes/_ind (account grain)
 #   Frame classification: on_roll_cohort, window_bucket, the 25/31/overall flags,
 #     has_transcript
 #   Transcript timeframe (from the transcript table, keys/effdt only - no text):
@@ -123,7 +126,13 @@ ledger AS (
            dlnqt_cd_m1, dlnqt_cd_m2, stg_cd_m1,
            min_due_amt, eop_bal_m1, cr_lmt_m1, utilization_m1, last_pay_vs_min_due,
            paymt_amt_m1, paymt_amt_m2, paymt_last_amt, pay_dt,
-           max_bucket, eom_bucket
+           max_bucket, eom_bucket,
+           -- M0 bucket (Dec 2024, derived from 00n), new-roll flag, real past-due date
+           dlnqt_bkt_m0, new_roll_flag, past_due_last_dt,
+           -- post-due(31) counts, two grains + indicator (account grain)
+           inbound_call_stmnt_dt_25_plus_31_calls,
+           inbound_call_stmnt_dt_25_plus_31_episodes,
+           inbound_call_stmnt_dt_25_plus_31_ind
     FROM {T_01S}
 ),
 eligible_calls AS (
@@ -142,6 +151,10 @@ eligible_calls AS (
            l.min_due_amt, l.eop_bal_m1, l.cr_lmt_m1, l.utilization_m1, l.last_pay_vs_min_due,
            l.paymt_amt_m1, l.paymt_amt_m2, l.paymt_last_amt, l.pay_dt,
            l.max_bucket, l.eom_bucket,
+           l.dlnqt_bkt_m0, l.new_roll_flag, l.past_due_last_dt,
+           l.inbound_call_stmnt_dt_25_plus_31_calls,
+           l.inbound_call_stmnt_dt_25_plus_31_episodes,
+           l.inbound_call_stmnt_dt_25_plus_31_ind,
            (r.acct_key IS NOT NULL) AS on_roll_cohort,
            CASE
              WHEN r.acct_key IS NOT NULL AND c.call_31_window_f = 1 THEN 'roll-cohort post-due'
@@ -181,7 +194,10 @@ SELECT e.contactid,
        e.call_overall_f,
        e.days_since_stmt_dt,
        e.stmt_dt,
+       -- due_dt_derived = stmt_dt + 25 (cycle marker); past_due_last_dt = the real
+       -- observed past-due date (fmt/CSV). Both carried.
        e.due_dt_derived,
+       e.past_due_last_dt,
        e.call_dt,
        e.call_month,
        -- call-context review columns (real call-table columns)
@@ -197,6 +213,13 @@ SELECT e.contactid,
        e.stg_cd_m1,
        e.max_bucket,
        e.eom_bucket,
+       e.dlnqt_bkt_m0,
+       e.new_roll_flag,
+       -- account-grain post-due(31) counts, two grains + indicator (repeated per
+       -- row - fine for a flat pivot table)
+       e.inbound_call_stmnt_dt_25_plus_31_calls,
+       e.inbound_call_stmnt_dt_25_plus_31_episodes,
+       e.inbound_call_stmnt_dt_25_plus_31_ind,
        e.min_due_amt,
        e.eop_bal_m1,
        e.cr_lmt_m1,

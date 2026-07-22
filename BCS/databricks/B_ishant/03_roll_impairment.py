@@ -26,10 +26,10 @@
 #
 # THE STAGE BREAKDOWN
 #   STG_CD_M2 (IFRS9 stage at Feb): blank / S1 / S2 / S3 on the roll cohort.
-#   The stage-2 accounts include HRAM (high-risk-account-management) cases;
-#   HRAM is run as an Excel-only daily process and has no column in the SAS
-#   export carried here, so the HRAM-exclusion cut is left as a marked open item
-#   rather than fabricated.
+#   The stage-2 accounts include HRAM (high-risk-account-management) cases.
+#   The HRAM flag (hram_flag_apollo_M1) is a real CSV column carried through, so
+#   the STG_CD_M2 breakdown is computed both ALL and EXCLUDING-HRAM (an account
+#   is HRAM when the apollo M1 flag is set: '1'/'Y'/'TRUE').
 #
 #   Every print/display below is prefixed with this file name for screenshots.
 # =====================================================================
@@ -100,8 +100,20 @@ SELECT acct_key, acct_num,
        paymt_amt_m1, paymt_amt_m2, min_due_amt, paymt_last_amt, last_pay_vs_min_due,
        -- account dimensions
        cpc_class, cpc_flag_nw, max_bucket, eom_bucket,
+       -- M0 delinquency bucket (Dec 2024), derived from 00n; carried through
+       dlnqt_bkt_m0,
+       -- new-roll flag (real CSV column) + HRAM apollo M1 (real CSV column; the
+       -- HRAM cut below excludes accounts where the apollo HRAM flag is set)
+       new_roll_flag, hram_flag_apollo_m1,
+       -- past-due date carried two ways: past_due_last_dt (real observed) and
+       -- due_dt_derived (= stmt_dt + 25; the cycle marker, built in 02_windows.py)
+       past_due_last_dt,
        -- called-window flags carried from the folded ledger
        accts_called_25_f, accts_called_31_f, accts_called_overall_f,
+       -- post-due(31) counts, two grains + indicator (carried from the folded ledger)
+       inbound_call_stmnt_dt_25_plus_31_calls,
+       inbound_call_stmnt_dt_25_plus_31_episodes,
+       inbound_call_stmnt_dt_25_plus_31_ind,
        TRUE AS post_due_base,           -- the whole table is the post-due-called ledger base
        (try_cast(dlnqt_cd_m1 AS int) = 1 AND try_cast(dlnqt_cd_m2 AS int) = 2) AS rolled_dq1_dq2
 FROM {T_01S}
@@ -202,16 +214,45 @@ GROUP BY 1 ORDER BY 1
 """))
 
 # ---------------------------------------------------------------------
-# [OPEN: HRAM flag source] The stage-2 roll accounts include HRAM
-# (high-risk-account-management) cases that should be excluded from the
-# addressable cut. HRAM is an Excel-only daily process; there is no HRAM flag
-# in the SAS export columns carried here, so the stage-2-excluding-HRAM cut is
-# not computed. To complete it, source the HRAM flag (the hram_flag_refit_M2 /
-# hram_flag_apollo_M2 columns exist in the wider SAS export) and add a
-# stage-2-excluding-HRAM cut. Left as a marked open item; not fabricated.
+# 03h. STG_CD_M2 breakdown EXCLUDING HRAM on the roll cohort. An account is HRAM
+# when hram_flag_apollo_m1 is set ('1' / 'Y' / 'TRUE'); those accounts are
+# dropped, leaving the addressable stage cut. The HRAM flag is a real carried
+# CSV column (hram_flag_apollo_M1), read as a string (inferSchema=False).
 # ---------------------------------------------------------------------
-print("[03_roll_impairment.py] [OPEN: HRAM flag source] stage-2-excluding-HRAM "
-      "split not computed - HRAM flag not present in the carried SAS columns; "
-      "source hram_flag_refit_M2 / hram_flag_apollo_M2 to complete it. Not fabricated.")
+HRAM_SET = ("upper(trim(cast(hram_flag_apollo_m1 AS string))) IN ('1','Y','TRUE','T')")
+
+print("[03_roll_impairment.py] STG_CD_M2 breakdown on the DQ1->DQ2 roll cohort, EXCLUDING HRAM:")
+display(spark.sql(f"""
+SELECT CASE WHEN stg_cd_m2 IS NULL OR trim(stg_cd_m2) = '' THEN '(blank)'
+            ELSE upper(trim(stg_cd_m2)) END AS stg_cd_m2,
+       count(1)              AS accts,
+       round(avg(cr_lmt_m1), 0) AS avg_cl,
+       round(sum(ecl_m2), 0) AS ecl_m2_sum,
+       round(sum(ecl_m3), 0) AS ecl_m3_sum,
+       count_if(try_cast(co_8m_flag  AS int) = 1) AS co_8m_cnt,
+       count_if(try_cast(co_10m_flag AS int) = 1) AS co_10m_cnt,
+       count_if(try_cast(co_12m_flag AS int) = 1) AS co_12m_cnt,
+       round(sum(chrgoff_8m_amt), 0)   AS gross_ncl_8m,
+       round(sum(chrgoff_10m_amt), 0)  AS gross_ncl_10m,
+       round(sum(chrgoff_12m_amt), 0)  AS gross_ncl_12m,
+       round(sum(chrgoff_amt_lftm), 0) AS gross_ncl_lftm
+FROM {T_03R} WHERE rolled_dq1_dq2 AND NOT ({HRAM_SET})
+GROUP BY 1 ORDER BY 1
+"""))
+
+_h = spark.sql(f"""
+SELECT count(1)                       AS roll_accts,
+       count_if({HRAM_SET})           AS hram_accts,
+       count_if(NOT ({HRAM_SET}))     AS non_hram_accts,
+       count_if(upper(trim(stg_cd_m2)) = 'S2')                       AS s2_all,
+       count_if(upper(trim(stg_cd_m2)) = 'S2' AND NOT ({HRAM_SET}))  AS s2_excl_hram
+FROM {T_03R} WHERE rolled_dq1_dq2
+""").first()
+print("[03_roll_impairment.py] HRAM cut on the roll cohort:")
+print(f"  roll accounts          : {_h['roll_accts']:>8,}")
+print(f"  HRAM (apollo M1 set)   : {_h['hram_accts']:>8,}")
+print(f"  non-HRAM               : {_h['non_hram_accts']:>8,}")
+print(f"  STG_CD_M2 = S2 (all)   : {_h['s2_all']:>8,}")
+print(f"  STG_CD_M2 = S2 (ex-HRAM): {_h['s2_excl_hram']:>7,}")
 
 print("[03_roll_impairment.py] 03_roll_impairment complete: uc2_t16_03r_roll")

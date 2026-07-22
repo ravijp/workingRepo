@@ -222,29 +222,99 @@ FROM {T_02N}
 # table with the accts_called_* flags on the same table as the funnel columns.
 # accts_called_* = max(window_flag) per account. The population is every 01s
 # account; calls only classify.
+#
+# TWO GRAINS carried for the post-due(31) count:
+#   *_episodes = counted over uc2_t16_02n_episodes (the DEDUPED grain, first
+#                inbound per (acct_key, call_dt)); this is our episode definition.
+#   *_calls    = counted over ALL inbound in-window calls (PRE-dedup, is_biz=0),
+#                no per-day dedup. Re-derived here in all_calls straight from the
+#                call table with the same anchor/window logic as 02n's
+#                calls_flagged, so nothing is dropped and the dedup above is
+#                untouched.
+#   *_ind      = account-level any-post-due-call indicator = max(call_31_window_f)
+#                (equals accts_called_31_f; aliased, both kept).
 # ---------------------------------------------------------------------
 spark.sql(f"""
 CREATE OR REPLACE TABLE {T_01S} AS
 WITH call_acct AS (
+    -- DEDUPED episode grain (from uc2_t16_02n_episodes, one row per acct/day)
     SELECT acct_key,
            count(1) AS inbound_call_cnt_stmt_window,
            count(DISTINCT contactid) AS inbound_contact_cnt_stmt_window,
+           count_if(call_31_window_f = 1) AS inbound_call_stmnt_dt_25_plus_31_episodes,
            max(call_25_window_f)  AS accts_called_25_f,       -- 25 = pre-due (day 0-24)
            max(call_31_window_f)  AS accts_called_31_f,       -- 31 = post-due (day 25-55)
-           max(call_overall_f)    AS accts_called_overall_f
+           max(call_overall_f)    AS accts_called_overall_f,
+           max(call_31_window_f)  AS inbound_call_stmnt_dt_25_plus_31_ind
     FROM {T_02N}
     GROUP BY acct_key
+),
+stmt_anchor_raw AS (
+    -- same anchor derivation as the 02n build (single-max statement anchor)
+    SELECT {NUM_KEY.format(c="extnl_acct_id")} AS acct_key,
+           try_cast(extnl_acct_id AS bigint) AS acct_num,
+           try_cast(stmt_last_dt AS date) AS stmt_dt
+    FROM {FMT}
+    WHERE sfx_nbr = 0
+      AND eff_dt >= '{MONTH_WIN_START}' AND eff_dt < '{MONTH_WIN_END}'
+      AND stmt_last_dt IS NOT NULL
+      AND try_cast(stmt_last_dt AS date) >= DATE '{STMT_START}'
+      AND try_cast(stmt_last_dt AS date) <  DATE '{STMT_END_EXCL}'
+),
+stmt_anchor AS (
+    SELECT acct_key, acct_num, max(stmt_dt) AS stmt_dt
+    FROM stmt_anchor_raw
+    GROUP BY acct_key, acct_num
+),
+all_calls AS (
+    -- ALL inbound in-window calls, PRE-dedup (no per-day dedup), is_biz = 0.
+    -- Same anchor/window/scan logic as 02n's calls_flagged; used only for the
+    -- all-calls post-due count. The 02n dedup above is unchanged.
+    SELECT a.acct_key,
+           count_if(c.`date` >= date_add(a.stmt_dt, {STMT_DUE_DAY})
+                    AND c.`date` < date_add(a.stmt_dt, {STMT_WINDOW_DAYS}))
+             AS inbound_call_stmnt_dt_25_plus_31_calls
+    FROM {CALL} c
+    JOIN stmt_anchor a
+      ON try_cast(c.acctid AS bigint) = a.acct_num
+    WHERE c.initiationmethod = 'INBOUND'
+      AND c.acctid IS NOT NULL
+      AND c.effdt >= '{EFFDT_SCAN_START}' AND c.effdt < '{EFFDT_HARD_END}'
+      AND coalesce(cast(c.producttype AS string), '') <> 'BUSINESS_CARD'
+      AND a.acct_key IS NOT NULL AND a.acct_key <> ''
+    GROUP BY a.acct_key
 )
 SELECT p.*,
        coalesce(c.inbound_call_cnt_stmt_window, 0)     AS inbound_call_cnt_stmt_window,
        coalesce(c.inbound_contact_cnt_stmt_window, 0)  AS inbound_contact_cnt_stmt_window,
        coalesce(c.accts_called_25_f, 0)                AS accts_called_25_f,
        coalesce(c.accts_called_31_f, 0)                AS accts_called_31_f,
-       coalesce(c.accts_called_overall_f, 0)           AS accts_called_overall_f
+       coalesce(c.accts_called_overall_f, 0)           AS accts_called_overall_f,
+       -- post-due(31) counts, two grains + indicator
+       coalesce(ac.inbound_call_stmnt_dt_25_plus_31_calls, 0)
+         AS inbound_call_stmnt_dt_25_plus_31_calls,     -- ALL calls, no per-day dedup
+       coalesce(c.inbound_call_stmnt_dt_25_plus_31_episodes, 0)
+         AS inbound_call_stmnt_dt_25_plus_31_episodes,  -- DEDUPED episodes (our grain)
+       coalesce(c.inbound_call_stmnt_dt_25_plus_31_ind, 0)
+         AS inbound_call_stmnt_dt_25_plus_31_ind        -- any-post-due-call indicator
 FROM {T_01S} p
-LEFT JOIN call_acct c ON c.acct_key = p.acct_key
+LEFT JOIN call_acct c  ON c.acct_key = p.acct_key
+LEFT JOIN all_calls ac ON ac.acct_key = p.acct_key
 """)
 print(f"[02_windows.py] folded window flags into {T_01S} (funnel + accts_called_* on one table)")
+print(f"[02_windows.py] post-due(31) counts carried at two grains: "
+      "_calls (all-calls, no dedup) and _episodes (deduped), plus _ind (indicator)")
+
+_pd = spark.sql(f"""
+SELECT sum(inbound_call_stmnt_dt_25_plus_31_calls)    AS post_due_31_calls_all,
+       sum(inbound_call_stmnt_dt_25_plus_31_episodes) AS post_due_31_episodes,
+       sum(inbound_call_stmnt_dt_25_plus_31_ind)      AS post_due_31_accts_ind
+FROM {T_01S} WHERE in_sas_ledger
+""").first()
+print("[02_windows.py] ledger post-due(31) totals:")
+print(f"  all-calls (no dedup)    : {_pd['post_due_31_calls_all']:>10,}")
+print(f"  deduped episodes        : {_pd['post_due_31_episodes']:>10,}")
+print(f"  accounts (indicator)    : {_pd['post_due_31_accts_ind']:>10,}")
 
 # COMMAND ----------
 

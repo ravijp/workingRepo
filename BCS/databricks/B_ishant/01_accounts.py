@@ -195,6 +195,14 @@ mon AS (
            pay_dt, auto_dt, nsf_dt
     FROM {T_00N}
     WHERE ym = '{ANCHOR_YM}'
+),
+-- M0 = the prior/anchor-start month bucket (Dec 2024) from the monthly
+-- delinquency layer. eom_bucket at ym=202412 is the M0 delinquency bucket,
+-- derived here (not read from the CSV). Bucket ladder is 0..10.
+mon_m0 AS (
+    SELECT acct_key, eom_bucket AS dlnqt_bkt_m0
+    FROM {T_00N}
+    WHERE ym = '{MONTH_WIN_START[:6]}'
 )
 SELECT cast(f.acct_num AS string) AS acct_key,
        f.acct_num,
@@ -232,6 +240,22 @@ SELECT cast(f.acct_num AS string) AS acct_key,
        f.CO_8M_FLAG AS co_8m_flag, f.CO_10M_FLAG AS co_10m_flag, f.CO_12M_FLAG AS co_12m_flag,
        f.CHRGOFF_RSN_M1 AS chrgoff_rsn_m1,
        f.CPC_FLAG_NW AS cpc_flag_nw,
+       -- new-roll flag: passthrough from the SAS csv (real CSV column)
+       f.NEW_ROLL_FLAG AS new_roll_flag,
+       -- HRAM flags: real CSV columns (hram_flag_apollo/refit by month).
+       -- Apollo M1 carries the anchor-start (Dec) HRAM score; used for the
+       -- stage-2-excluding-HRAM cut in 03_roll_impairment.py.
+       f.hram_flag_apollo_M1 AS hram_flag_apollo_m1,
+       f.hram_flag_apollo_M2 AS hram_flag_apollo_m2,
+       f.hram_flag_apollo_M3 AS hram_flag_apollo_m3,
+       f.hram_flag_refit_M1 AS hram_flag_refit_m1,
+       f.hram_flag_refit_M2 AS hram_flag_refit_m2,
+       f.hram_flag_refit_M3 AS hram_flag_refit_m3,
+       -- past-due date, carried two ways (both kept):
+       --   past_due_last_dt = the real observed past-due date (fmt/CSV PAST_DUE_LAST_DT)
+       --   due_dt_derived   = the cycle marker (stmt_dt + 25), built in 02_windows.py
+       coalesce(try_cast(f.PAST_DUE_LAST_DT AS date),
+                try_to_date(cast(f.PAST_DUE_LAST_DT AS string), 'ddMMMyyyy')) AS past_due_last_dt,
        -- ============ REVIEW COLUMNS (account grain) ============
        -- cpc_class = the CPC / department class, from the FMT product code
        -- eom_cpc (clnt_prdct_cd), NOT the SAS CPC_FLAG_NW.
@@ -250,6 +274,9 @@ SELECT cast(f.acct_num AS string) AS acct_key,
        mon.eom_cpc AS eom_cpc,                              -- FMT product code (clnt_prdct_cd)
        mon.max_bucket AS max_bucket,                        -- worst past-due bucket in Jan
        mon.eom_bucket AS eom_bucket,                        -- Jan end-of-month bucket
+       -- M0 = the prior/anchor-start month bucket (Dec 2024) from the monthly
+       -- delinquency layer; derived from 00n, not read from the CSV.
+       mon_m0.dlnqt_bkt_m0 AS dlnqt_bkt_m0,
        mon.eom_bal AS eom_bal,                              -- Jan end-of-month balance (FMT)
        mon.eom_cr_lmt_origl_amt AS eom_cr_lmt_origl_amt,    -- FMT original credit limit
        mon.min_due_amt AS min_due_amt,                      -- minimum due (fmt PAYMT_MIN_DUE_AMT)
@@ -269,7 +296,8 @@ SELECT cast(f.acct_num AS string) AS acct_key,
        (coalesce(try_cast(f.PAYMT_AMT_M1 AS double), 0) < 0
         OR coalesce(try_cast(f.PAYMT_AMT_M2 AS double), 0) < 0) AS captured_sas
 FROM f
-LEFT JOIN mon ON mon.acct_key = cast(f.acct_num AS string)
+LEFT JOIN mon    ON mon.acct_key = cast(f.acct_num AS string)
+LEFT JOIN mon_m0 ON mon_m0.acct_key = cast(f.acct_num AS string)
 """)
 print(f"[01_accounts.py] built {T_01S} (first pass; 02_windows.py folds on the call-window flags)")
 
