@@ -10,4 +10,6 @@ Before changing anything, run this and paste the output so we work from the real
 
 uv run python -c "from azure.ai.projects.models import PromptAgentDefinition as P; import azure.ai.projects as m; print('SDK', m.__version__); print('fields', sorted(getattr(P,'_attribute_map',{}).keys()) or [k for k in P().__dict__]); import inspect; from azure.ai.projects.operations import AgentsOperations as A; print('create_version', inspect.signature(A.create_version))"
 
+
+Then re-run the publish, run it a second time, and confirm the second run reports unchanged. Do not accept a run that creates two versions.
 ---
