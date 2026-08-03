@@ -1,3 +1,4 @@
+```
 Read each collections call transcript below. Every customer was one payment behind
 and later rolled to the next delinquency bucket. Turns appear as "CUSTOMER:" and
 "AGENT:". Names appear as [NAME]. Some digits are masked. The audio was
@@ -159,3 +160,5 @@ RESTATE, do not skip:
 - SCREEN_TEXT is an actual message to an agent, under 12 words, or: nothing
 - Use only the text between the BEGIN and END markers
 - Last line exactly: ===END nonce=K7QX rows=6===
+
+```
